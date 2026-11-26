@@ -5,7 +5,7 @@
  */
 
 const SURROGATE_PAIR_OR_LONE_SURROGATE = /([\uD800-\uDBFF][\uDC00-\uDFFF])|[\uD800-\uDFFF]/g;
-const REPLACEMENT_CHARACTER = '�';
+const REPLACEMENT_CHARACTER = '\uFFFD';
 const ENDS_WITH_HIGH_SURROGATE = /[\uD800-\uDBFF]$/;
 
 /** Replaces each lone surrogate with U+FFFD and keeps surrogate pairs. (`String#toWellFormed` is ES2024.) */

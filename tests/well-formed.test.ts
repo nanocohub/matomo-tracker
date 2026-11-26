@@ -5,7 +5,7 @@ import { commandsAfterInit, createTracker, queuedCommands } from './helpers';
 const EMOJI = '\u{1F600}';
 const HIGH_SURROGATE = EMOJI.charAt(0);
 const LOW_SURROGATE = EMOJI.charAt(1);
-const REPLACEMENT = '�';
+const REPLACEMENT = '\uFFFD';
 /** A name an app cut in the middle of its emoji. */
 const CUT_MID_EMOJI = `Quạt ${EMOJI}`.slice(0, -1);
 
