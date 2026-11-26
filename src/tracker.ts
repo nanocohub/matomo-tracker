@@ -13,7 +13,7 @@ import type { ProductView } from './ecommerce';
 import { buildEventCommand, cleanText, isFiniteNumber } from './event';
 import { buildInitCommands } from './init-commands';
 import { createLogger } from './logger';
-import { buildPageUrl } from './page-url';
+import { buildPageUrl, buildSameOriginReferrerUrl } from './page-url';
 import { discardQueuedCommands, enqueue, isBrowser } from './queue';
 import { injectMatomoScript } from './script';
 import { buildSiteSearchCommand } from './site-search';
@@ -87,8 +87,12 @@ export function createMatomoTracker(options: MatomoTrackerOptions): MatomoTracke
     state.started = true;
     state.newVisitPending = memory.readNewVisitPending();
 
-    const currentUrl = buildPageUrl(window.location.href, window.location.href, config);
-    buildInitCommands(config, currentUrl).forEach(send);
+    const href = window.location.href;
+    const page = {
+      currentUrl: buildPageUrl(href, href, config),
+      sameOriginReferrerUrl: buildSameOriginReferrerUrl(document.referrer, href, config),
+    };
+    buildInitCommands(config, page).forEach(send);
     injectMatomoScript(`${config.baseUrl}/matomo.js`, handleScriptFailure);
   }
 

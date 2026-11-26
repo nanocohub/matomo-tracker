@@ -37,6 +37,11 @@ export function navigateTo(path: string): void {
   window.history.replaceState(null, '', path);
 }
 
+/** What `document.referrer` returns for the page load under test; `tests/setup.ts` restores it. */
+export function setReferrer(referrer: string): void {
+  Object.defineProperty(document, 'referrer', { value: referrer, configurable: true });
+}
+
 export function matomoScripts(): HTMLScriptElement[] {
   return Array.from(document.querySelectorAll<HTMLScriptElement>('script[data-nanoco-matomo]'));
 }

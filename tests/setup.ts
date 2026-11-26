@@ -7,5 +7,6 @@ beforeEach(() => {
   document.querySelectorAll('script').forEach((script) => script.remove());
   window.sessionStorage.clear();
   window.history.replaceState(null, '', '/');
+  Reflect.deleteProperty(document, 'referrer');
   document.title = '';
 });

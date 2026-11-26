@@ -17,7 +17,22 @@ export function buildPageUrl(input: string, baseHref: string, rules: PageUrlRule
   return `${parsed.origin}${path}${query}`;
 }
 
-function parseUrl(input: string, baseHref: string): URL | null {
+/**
+ * The sanitized form of `document.referrer`, but only when it is a page of the same origin
+ * (typically the OAuth callback that redirected to this page, `?code=` and all).
+ * Returns `null` for an empty or external referrer: browsers send only the origin of a
+ * cross-origin referrer by default, and Matomo needs it as it is for referrer attribution.
+ */
+export function buildSameOriginReferrerUrl(referrer: string, pageHref: string, rules: PageUrlRules): string | null {
+  const parsedReferrer = referrer ? parseUrl(referrer) : null;
+  const parsedPage = parseUrl(pageHref);
+  if (parsedReferrer === null || parsedPage === null || parsedReferrer.origin !== parsedPage.origin) return null;
+
+  return buildPageUrl(referrer, pageHref, rules);
+}
+
+/** Without a base, only an absolute URL parses. */
+function parseUrl(input: string, baseHref?: string): URL | null {
   try {
     const parsed = new URL(input, baseHref);
     return parsed.protocol === 'http:' || parsed.protocol === 'https:' ? parsed : null;

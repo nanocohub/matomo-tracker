@@ -122,9 +122,15 @@ leaves them alone.
 
 **`trackPageView({ url?, title?, force? })`**. The URL defaults to `window.location.href` and may be a path.
 It is reduced to `origin + normalizePath(pathname) + kept query params`. The commands go out in this order:
-`setReferrerUrl` (the previous tracked URL; the first view keeps `document.referrer`), `setCustomUrl`,
+`setReferrerUrl` (the previous tracked URL; none for the first view of a page load, see below), `setCustomUrl`,
 `setDocumentTitle`, the pending ecommerce product view, the new-visit flag, `trackPageView`. A view whose final
 URL equals the last one is skipped unless `force`. Each tracked view resets the `trackError` counter.
+
+The referrer of the **first view of a page load** is `document.referrer`. When it is a page of the **same origin**
+(the OAuth callback that redirected to this page, say) it is set at init in its sanitized form, with the same
+`keepQueryParams` and `normalizePath` rules as page URLs, so a `?code=` in it never reaches Matomo. An **external**
+referrer is left untouched, because Matomo needs it for referrer and keyword attribution (browsers send only the
+origin of a cross-origin referrer by default).
 
 **`trackEvent({ category, action, name?, value? })`**: `name` is trimmed to 100 characters. A blank
 category or action drops the event.
@@ -313,7 +319,8 @@ For a plain `<script>` page with no modules, load `dist/browser.global.js` from 
 - Queues Matomo's configuration once, before any hit, and loads `matomo.js` once however many trackers exist.
 - Sets the sanitized current URL up front, so an error raised before the first page view does not report
   `location.href` with a `?code=` attached.
-- Chains referrers across single-page navigations.
+- Sanitizes a same-origin `document.referrer` for the first view of a page load (an external one is left alone),
+  and chains referrers across single-page navigations.
 - Starts a new visit through `appendToTrackingUrl('new_visit=1')` around **one** page view only, so a heartbeat
   or an event sent in between cannot open a phantom visit.
 - Bounds the pre-load queue at 500 commands, and turns tracking off when matomo.js fails to load.

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { PAGE_ORIGIN, commandsAfterInit, createTracker, navigateTo } from './helpers';
+import { PAGE_ORIGIN, commandsAfterInit, createTracker, navigateTo, queuedCommands, setReferrer } from './helpers';
 
 describe('trackPageView', () => {
   it('queues the url, the title and the hit, in that order, with no referrer for the first view', () => {
@@ -75,10 +75,77 @@ describe('referrer chaining', () => {
     ]);
   });
 
-  it('never sets a referrer for the first view, so Matomo keeps document.referrer', () => {
+  it('sets no referrer in the first view itself: the one of the page load was set at init, or is external', () => {
     createTracker().trackPageView({ url: '/a' });
 
     expect(commandsAfterInit().some(([name]) => name === 'setReferrerUrl')).toBe(false);
+  });
+});
+
+describe('the referrer of the page load', () => {
+  const callback = `${PAGE_ORIGIN}/auth/callback?code=SECRET123&state=abc#token`;
+
+  it('is set at init without its query string when it is a page of the same origin', () => {
+    setReferrer(callback);
+
+    createTracker().push(['ping']);
+
+    expect(queuedCommands().slice(2, 5)).toEqual([
+      ['setCustomUrl', `${PAGE_ORIGIN}/`],
+      ['setReferrerUrl', `${PAGE_ORIGIN}/auth/callback`],
+      ['enableLinkTracking'],
+    ]);
+  });
+
+  it('never reaches Matomo with the code in it', () => {
+    setReferrer(callback);
+    const tracker = createTracker();
+
+    tracker.trackPageView({ url: '/dashboard' });
+
+    expect(JSON.stringify(queuedCommands())).not.toContain('SECRET123');
+  });
+
+  it('follows keepQueryParams and normalizePath like a page url', () => {
+    setReferrer(`${PAGE_ORIGIN}/orders/123?page=2&code=SECRET123`);
+
+    createTracker({ keepQueryParams: ['page'], normalizePath: (path) => path.replace(/\d+/g, ':id') }).push(['ping']);
+
+    expect(queuedCommands()).toContainEqual(['setReferrerUrl', `${PAGE_ORIGIN}/orders/:id?page=2`]);
+  });
+
+  it.each([
+    ['an external page', 'https://www.google.com/search?q=router&oq=router'],
+    ['another subdomain', 'https://login.example.com/callback?code=abc'],
+    ['the same host over http', 'http://app.example.com/callback?code=abc'],
+  ])('is left to Matomo untouched when it is %s, which Matomo needs for attribution', (_label, referrer) => {
+    setReferrer(referrer);
+
+    createTracker().push(['ping']);
+
+    expect(queuedCommands().some(([name]) => name === 'setReferrerUrl')).toBe(false);
+  });
+
+  it.each([['an empty referrer', ''], ['an unparseable referrer', 'not a url']])('is ignored for %s', (_label, referrer) => {
+    setReferrer(referrer);
+
+    createTracker().push(['ping']);
+
+    expect(queuedCommands().some(([name]) => name === 'setReferrerUrl')).toBe(false);
+  });
+
+  it('is replaced by the previous tracked url from the second view on', () => {
+    setReferrer(callback);
+    const tracker = createTracker();
+
+    tracker.trackPageView({ url: '/dashboard' });
+    tracker.trackPageView({ url: '/orders' });
+
+    const referrers = queuedCommands().filter(([name]) => name === 'setReferrerUrl');
+    expect(referrers).toEqual([
+      ['setReferrerUrl', `${PAGE_ORIGIN}/auth/callback`],
+      ['setReferrerUrl', `${PAGE_ORIGIN}/dashboard`],
+    ]);
   });
 });
 

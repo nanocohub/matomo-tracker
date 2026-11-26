@@ -162,7 +162,7 @@ function normalizeCategory(category) {
 }
 
 // src/init-commands.ts
-function buildInitCommands(config, currentUrl) {
+function buildInitCommands(config, page) {
   const commands = [
     ["setTrackerUrl", `${config.baseUrl}/matomo.php`],
     ["setSiteId", config.siteId],
@@ -170,7 +170,8 @@ function buildInitCommands(config, currentUrl) {
     config.domains.length > 0 ? ["setDomains", config.domains] : null,
     config.cookieDomain ? ["setCookieDomain", config.cookieDomain] : null,
     config.requireCookieConsent ? ["requireCookieConsent"] : null,
-    currentUrl ? ["setCustomUrl", currentUrl] : null,
+    page.currentUrl ? ["setCustomUrl", page.currentUrl] : null,
+    page.sameOriginReferrerUrl ? ["setReferrerUrl", page.sameOriginReferrerUrl] : null,
     config.linkTracking ? ["enableLinkTracking"] : null,
     config.heartbeatSeconds === false ? null : ["enableHeartBeatTimer", config.heartbeatSeconds],
     config.jsErrorTracking ? ["enableJSErrorTracking"] : null
@@ -196,6 +197,12 @@ function buildPageUrl(input, baseHref, rules) {
   const path = normalizePathname(parsed.pathname, rules.normalizePath);
   const query = keepQueryParams(parsed.search, rules.keepQueryParams);
   return `${parsed.origin}${path}${query}`;
+}
+function buildSameOriginReferrerUrl(referrer, pageHref, rules) {
+  const parsedReferrer = referrer ? parseUrl(referrer) : null;
+  const parsedPage = parseUrl(pageHref);
+  if (parsedReferrer === null || parsedPage === null || parsedReferrer.origin !== parsedPage.origin) return null;
+  return buildPageUrl(referrer, pageHref, rules);
 }
 function parseUrl(input, baseHref) {
   try {
@@ -331,8 +338,12 @@ function createMatomoTracker(options) {
     if (state.started) return;
     state.started = true;
     state.newVisitPending = memory.readNewVisitPending();
-    const currentUrl = buildPageUrl(window.location.href, window.location.href, config);
-    buildInitCommands(config, currentUrl).forEach(send);
+    const href = window.location.href;
+    const page = {
+      currentUrl: buildPageUrl(href, href, config),
+      sameOriginReferrerUrl: buildSameOriginReferrerUrl(document.referrer, href, config)
+    };
+    buildInitCommands(config, page).forEach(send);
     injectMatomoScript(`${config.baseUrl}/matomo.js`, handleScriptFailure);
   }
   function handleScriptFailure() {
