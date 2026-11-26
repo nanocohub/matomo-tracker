@@ -436,7 +436,10 @@ function createMatomoTracker(options) {
         logger.warn("page view dropped: not an http(s) URL", view == null ? void 0 : view.url);
         return;
       }
-      if ((view == null ? void 0 : view.force) !== true && url === state.lastViewUrl) return;
+      if ((view == null ? void 0 : view.force) !== true && url === state.lastViewUrl) {
+        state.pendingProduct = null;
+        return;
+      }
       if (!sendAll(pageViewCommands(url, (_b = view == null ? void 0 : view.title) != null ? _b : document.title))) return;
       state.lastViewUrl = url;
       state.errorEventsOnPage = 0;

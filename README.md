@@ -135,7 +135,8 @@ leaves them alone.
 It is reduced to `origin + normalizePath(pathname) + kept query params`. The commands go out in this order:
 `setReferrerUrl` (the previous tracked URL; none for the first view of a page load, see below), `setCustomUrl`,
 `setDocumentTitle`, the pending ecommerce product view, the new-visit flag, `trackPageView`. A view whose final
-URL equals the last one is skipped unless `force`. Each tracked view resets the `trackError` counter.
+URL equals the last one is skipped unless `force`, and drops a pending product view (see `productView`). Each
+tracked view resets the `trackError` counter.
 
 The referrer of the **first view of a page load** is `document.referrer`. When it is a page of the **same origin**
 (the OAuth callback that redirected to this page, say) it is set at init in its sanitized form, with the same
@@ -155,6 +156,9 @@ would record it as a zero).
 
 **`ecommerce.productView(product)`** is applied to the **next** page view that is actually sent, so call it
 before the view. For a product page whose data loads late, hold the page view back with `ready` (see the hook).
+A page view skipped as a repeat of the last URL **drops** the pending product instead: it belongs to the page that
+was already tracked (a product component that remounts on the same page, say), and kept pending it would ride on
+the next page, the cart for example. Pass `force: true` to send the page again with the product.
 **`ecommerce.cartUpdate(items, grandTotal)`** replaces the cart and sends the update.
 **`ecommerce.order(order)`** sends the order; the same `orderId` twice in one page session is ignored (Matomo
 also dedupes by order id on the server). Items default to price 0 and quantity 1.

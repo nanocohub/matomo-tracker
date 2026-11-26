@@ -208,7 +208,12 @@ export function createMatomoTracker(options: MatomoTrackerOptions): MatomoTracke
         logger.warn('page view dropped: not an http(s) URL', view?.url);
         return;
       }
-      if (view?.force !== true && url === state.lastViewUrl) return;
+      if (view?.force !== true && url === state.lastViewUrl) {
+        // A product viewed again on the page already tracked (a remounted component) belongs to that page:
+        // kept pending, it would ride on the next page instead.
+        state.pendingProduct = null;
+        return;
+      }
       if (!sendAll(pageViewCommands(url, view?.title ?? document.title))) return;
 
       state.lastViewUrl = url;

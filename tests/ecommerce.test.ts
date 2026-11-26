@@ -69,16 +69,62 @@ describe('ecommerce.productView', () => {
     expect(commandsAfterInit()[2]).toEqual(['setEcommerceView', 'SKU-1', '', 'Network', '']);
   });
 
-  it('waits for the next view that is actually sent when a page view is skipped as a repeat', () => {
+  it('is dropped by a view skipped as a repeat, so a remounted product page does not leak it to the next page', () => {
+    const tracker = createTracker();
+    const fan = { sku: 'NWF1606', name: 'Fan', category: ['Quat'], price: 1000 };
+    tracker.ecommerce.productView(fan);
+    tracker.trackPageView({ url: '/products/fan', title: 'Fan' });
+    // The product component remounts on the same page (a desktop/mobile layout swap on resize).
+    tracker.ecommerce.productView(fan);
+    tracker.trackPageView({ url: '/products/fan', title: 'Fan' });
+
+    tracker.trackPageView({ url: '/cart', title: 'Cart' });
+
+    expect(commandsAfterInit()).toEqual([
+      ['setCustomUrl', `${PAGE_ORIGIN}/products/fan`],
+      ['setDocumentTitle', 'Fan'],
+      ['setEcommerceView', 'NWF1606', 'Fan', '["Quat"]', 1000],
+      ['trackPageView'],
+      ['setReferrerUrl', `${PAGE_ORIGIN}/products/fan`],
+      ['setCustomUrl', `${PAGE_ORIGIN}/cart`],
+      ['setDocumentTitle', 'Cart'],
+      ['trackPageView'],
+    ]);
+  });
+
+  it('is still applied to the next page view after a repeat was skipped', () => {
+    const tracker = createTracker();
+    tracker.trackPageView({ url: '/products/1' });
+    tracker.trackPageView({ url: '/products/1' });
+    tracker.ecommerce.productView({ sku: 'SKU-2' });
+
+    tracker.trackPageView({ url: '/products/2' });
+
+    expect(commandsAfterInit().filter(([name]) => name === 'setEcommerceView')).toEqual([
+      ['setEcommerceView', 'SKU-2', '', '', ''],
+    ]);
+  });
+
+  it('is applied to a forced repeat of the last page view, and only to it', () => {
     const tracker = createTracker();
     tracker.trackPageView({ url: '/products/1' });
     tracker.ecommerce.productView({ sku: 'SKU-1' });
+    const queuedBefore = commandsAfterInit().length;
 
-    tracker.trackPageView({ url: '/products/1' });
-    expect(commandsAfterInit().some(([name]) => name === 'setEcommerceView')).toBe(false);
+    tracker.trackPageView({ url: '/products/1', title: 'Router', force: true });
+    tracker.trackPageView({ url: '/cart', title: 'Cart' });
 
-    tracker.trackPageView({ url: '/products/1', force: true });
-    expect(commandsAfterInit().some(([name]) => name === 'setEcommerceView')).toBe(true);
+    expect(commandsAfterInit().slice(queuedBefore)).toEqual([
+      ['setReferrerUrl', `${PAGE_ORIGIN}/products/1`],
+      ['setCustomUrl', `${PAGE_ORIGIN}/products/1`],
+      ['setDocumentTitle', 'Router'],
+      ['setEcommerceView', 'SKU-1', '', '', ''],
+      ['trackPageView'],
+      ['setReferrerUrl', `${PAGE_ORIGIN}/products/1`],
+      ['setCustomUrl', `${PAGE_ORIGIN}/cart`],
+      ['setDocumentTitle', 'Cart'],
+      ['trackPageView'],
+    ]);
   });
 
   it('ignores a product without a sku', () => {
