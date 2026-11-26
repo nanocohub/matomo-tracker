@@ -1,0 +1,55 @@
+name: CI
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+    paths-ignore:
+      - '**.md'
+  push:
+    branches: [main]
+    tags: ['v*']
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    # Draft pull requests are skipped; they run again when marked ready for review.
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+
+      - run: npm ci --no-audit --no-fund
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Test
+        run: npm test
+
+      - name: Build
+        run: npm run build
+
+      - name: Smoke test dist
+        run: npm run test:dist
+
+      # dist/ is committed so apps can install from git without a build step.
+      # `git status` (not `git diff`) so a new or removed file counts as stale too.
+      - name: Fail when dist is stale
+        run: |
+          if [ -n "$(git status --porcelain -- dist)" ]; then
+            echo "::error::dist/ does not match the source. Run 'npm run build' and commit dist/."
+            git status --short -- dist
+            exit 1
+          fi
