@@ -23,7 +23,7 @@ yarn add "@nanoco/matomo-tracker@github:nanocohub/matomo-tracker#v1.0.0"   # yar
 npm i "github:nanocohub/matomo-tracker#v1.0.0"                              # npm
 ```
 
-Always pin a tag, never a branch. While the first release is being rolled out the tag is `v1.0.0-rc.1`.
+Always pin a tag, never a branch. While the first release is being rolled out the tag is `v1.0.0-rc.3`.
 React is an optional peer (`>=17`), needed only for `@nanoco/matomo-tracker/react`.
 
 | Import                           | What                                                                             |

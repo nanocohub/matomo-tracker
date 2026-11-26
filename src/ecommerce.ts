@@ -34,8 +34,14 @@ export function normalizeProduct(product: EcommerceProduct): ProductView | null 
   };
 }
 
+/**
+ * matomo.js joins an array category with commas for `setEcommerceView`, and Matomo would then
+ * report one category named "Network,Cables". A JSON array string is read as several.
+ * (Cart items are different: they are serialized as a whole, so a nested array survives.)
+ */
 export function productViewCommand(view: ProductView): MatomoCommand {
-  return ['setEcommerceView', view.sku, view.name, view.category, view.price];
+  const category = Array.isArray(view.category) ? JSON.stringify(view.category) : view.category;
+  return ['setEcommerceView', view.sku, view.name, category, view.price];
 }
 
 export function clearCartCommand(): MatomoCommand {

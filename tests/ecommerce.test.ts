@@ -51,13 +51,22 @@ describe('ecommerce.productView', () => {
     expect(commandsAfterInit()[2]).toEqual(['setEcommerceView', 'SKU-1', '', '', 0]);
   });
 
-  it('passes up to five categories as an array', () => {
+  it('passes up to five categories as a JSON array string, which matomo.js would otherwise comma-join', () => {
     const tracker = createTracker();
     tracker.ecommerce.productView({ sku: 'SKU-1', category: ['a', ' b ', '', 'c', 'd', 'e', 'f'] });
 
     tracker.trackPageView({ url: '/products/1' });
 
-    expect(commandsAfterInit()[2]).toEqual(['setEcommerceView', 'SKU-1', '', ['a', 'b', 'c', 'd', 'e'], '']);
+    expect(commandsAfterInit()[2]).toEqual(['setEcommerceView', 'SKU-1', '', '["a","b","c","d","e"]', '']);
+  });
+
+  it('passes a single category as a plain string', () => {
+    const tracker = createTracker();
+    tracker.ecommerce.productView({ sku: 'SKU-1', category: ' Network ' });
+
+    tracker.trackPageView({ url: '/products/1' });
+
+    expect(commandsAfterInit()[2]).toEqual(['setEcommerceView', 'SKU-1', '', 'Network', '']);
   });
 
   it('waits for the next view that is actually sent when a page view is skipped as a repeat', () => {
@@ -98,6 +107,12 @@ describe('ecommerce.cartUpdate', () => {
       ['addEcommerceItem', 'SKU-2', 'Cable', '', 5, 1],
       ['trackEcommerceCartUpdate', 208],
     ]);
+  });
+
+  it('keeps an array category on a cart item as an array', () => {
+    createTracker().ecommerce.cartUpdate([{ sku: 'SKU-1', category: ['Network', 'Cables'] }], 5);
+
+    expect(commandsAfterInit()[1]).toEqual(['addEcommerceItem', 'SKU-1', '', ['Network', 'Cables'], 0, 1]);
   });
 
   it('defaults an item price to 0 and its quantity to 1', () => {

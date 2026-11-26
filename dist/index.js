@@ -119,7 +119,8 @@ function normalizeProduct(product) {
   };
 }
 function productViewCommand(view) {
-  return ["setEcommerceView", view.sku, view.name, view.category, view.price];
+  const category = Array.isArray(view.category) ? JSON.stringify(view.category) : view.category;
+  return ["setEcommerceView", view.sku, view.name, category, view.price];
 }
 function clearCartCommand() {
   return ["clearEcommerceCart"];
