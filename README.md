@@ -23,7 +23,7 @@ yarn add "@nanoco/matomo-tracker@github:nanocohub/matomo-tracker#v1.0.0"   # yar
 npm i "github:nanocohub/matomo-tracker#v1.0.0"                              # npm
 ```
 
-Always pin a tag, never a branch. While the first release is being rolled out the tag is `v1.0.0-rc.3`.
+Always pin a tag, never a branch. While the first release is being rolled out the tag is `v1.0.0-rc.4`.
 React is an optional peer (`>=17`), needed only for `@nanoco/matomo-tracker/react`.
 
 | Import                           | What                                                                             |
@@ -64,7 +64,7 @@ app simply does not track. `enabled` also turns `false` if matomo.js fails to lo
 | `url`                   | -              | Matomo base URL, https only. A trailing slash is fine.                                                         |
 | `siteId`                | -              | Positive integer, as a number or numeric string. `undefined` disables the tracker.                             |
 | `enabled`               | `true`         | `false` turns every call into a no-op.                                                                         |
-| `linkTracking`          | `true`         | Matomo `enableLinkTracking`: outlinks and downloads.                                                           |
+| `linkTracking`          | `true`         | Matomo `enableLinkTracking`: outlinks and downloads. They report the **raw** link URL, see convention 10.     |
 | `heartbeatSeconds`      | `15`           | Time on page. `false` turns it off. Matomo enforces a minimum of 5.                                            |
 | `jsErrorTracking`       | `true`         | Matomo `enableJSErrorTracking`. matomo.js dedupes identical errors itself but does not cap them.               |
 | `keepQueryParams`       | `[]`           | Page URLs keep **only** these query parameters. The `#fragment` is always dropped.                             |
@@ -148,7 +148,11 @@ before the view. For a product page whose data loads late, hold the page view ba
 **`ecommerce.order(order)`** sends the order; the same `orderId` twice in one page session is ignored (Matomo
 also dedupes by order id on the server). Items default to price 0 and quantity 1.
 
-**`push(command)`** is the escape hatch for any other `_paq` command, and is still SSR and disabled safe.
+**`push(command)`** is the escape hatch for any other `_paq` command, and is still SSR and disabled safe. Only push
+methods matomo.js knows (`trackGoal`, `rememberCookieConsentGiven`, ...): an unknown method name (a typo) makes
+matomo.js throw a `TypeError` while it replays the queue, and every command queued **after** it is lost, the
+tracker's own page views included. After matomo.js has loaded the error is swallowed, as everything the tracker
+does, and shows up only with `debug: true`.
 
 ### `useMatomoPageView(tracker, { path, title?, ready? })`
 
@@ -313,6 +317,10 @@ For a plain `<script>` page with no modules, load `dist/browser.global.js` from 
 9. **A Content-Security-Policy** must allow `https://analytics.nanoco.com.vn` in `script-src` and `connect-src`
    (and `img-src`, which Matomo falls back to), plus `https://cdn.jsdelivr.net` in `script-src` if the Rails
    build is pinned from the CDN.
+10. **Link tracking reports raw link URLs.** With `linkTracking` on (the default), the `href` of every clicked
+    outlink and download is sent exactly as it is in the page: it is **not** sanitized like page URLs. Do not render
+    links with secrets in them (a presigned S3 URL with `X-Amz-Signature`, a `?token=`), or give such an `<a>` the
+    `matomo_ignore` class (`piwik_ignore` works too), or set `linkTracking: false`.
 
 ## What the tracker does for you
 
@@ -323,7 +331,10 @@ For a plain `<script>` page with no modules, load `dist/browser.global.js` from 
   and chains referrers across single-page navigations.
 - Starts a new visit through `appendToTrackingUrl('new_visit=1')` around **one** page view only, so a heartbeat
   or an event sent in between cannot open a phantom visit.
-- Bounds the pre-load queue at 500 commands, and turns tracking off when matomo.js fails to load.
+- Bounds the pre-load queue at 500 commands, and turns tracking off when matomo.js fails to load. An operation
+  that needs several commands (a page view with a new visit, `identify`, `reset`, a cart or an order) is queued
+  whole or not at all, and the tracker changes its own state only after the commands were queued, so a full queue
+  can never leave a new visit flag set or mark a dropped page view or order as done.
 - Keeps working from memory when `sessionStorage` is blocked.
 
 ## Debugging
