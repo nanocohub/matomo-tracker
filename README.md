@@ -66,7 +66,7 @@ cannot be queued (see "What the tracker does for you").
 | `enabled`               | `true`         | `false` turns every call into a no-op.                                                                         |
 | `linkTracking`          | `true`         | Matomo `enableLinkTracking`: outlinks and downloads. They report the **raw** link URL, see convention 10.     |
 | `heartbeatSeconds`      | `15`           | Time on page. `false` turns it off. Matomo enforces a minimum of 5.                                            |
-| `jsErrorTracking`       | `true`         | Matomo `enableJSErrorTracking`. matomo.js dedupes identical errors itself but does not cap them.               |
+| `jsErrorTracking`       | `false`        | Matomo `enableJSErrorTracking`. **Off by default for privacy**, see the note below.                            |
 | `keepQueryParams`       | `[]`           | Page URLs keep **only** these query parameters. The `#fragment` is always dropped.                             |
 | `normalizePath`         | identity       | Maps the pathname before it is reported, e.g. `/orders/123` to `/orders/:id`.                                  |
 | `domains`               | -              | Matomo `setDomains`: hosts that count as internal links.                                                       |
@@ -75,6 +75,15 @@ cannot be queued (see "What the tracker does for you").
 | `requestMethod`         | Matomo's (GET) | `'POST'` avoids URL length limits (large carts), but the page origin must be allowed by Matomo's CORS settings. |
 | `maxErrorEventsPerPage` | `10`           | Cap for `trackError` per page view.                                                                            |
 | `debug`                 | `false`        | Logs every command and warns about suspicious event names.                                                     |
+
+**Why `jsErrorTracking` is off by default.** With it on, matomo.js reports every uncaught error as an event with
+category `JavaScript Errors`, and builds the rest itself: the **action** is `<script URL>:<line>:<column>`, which for
+an inline script is the URL of the page **including its query string** (so `keepQueryParams` does not apply), and the
+**name** is the raw error message, which can contain whatever the user typed. This package cannot sanitize either.
+Use `trackError(kind)` instead: it sends an event with a kind from a closed set you choose (`ApiTimeout`,
+`ChunkLoadFailed`), no message, at most `maxErrorEventsPerPage` per page view. Turn the option on only for an app
+whose URLs and error messages are known to carry nothing sensitive, and pass the boolean `true` (an env var is the
+string `'true'`, which does not count). matomo.js dedupes identical errors itself but does not cap them.
 
 ## API
 
@@ -313,7 +322,8 @@ For a plain `<script>` page with no modules, load `dist/browser.global.js` from 
    included, never reaches Matomo. Use `normalizePath` to fold ids (`/orders/:id`) so reports group.
 6. **Page titles are reported as they are.** If `document.title` contains a name or an id, pass `title`
    explicitly to `trackPageView` (or `useMatomoPageView`).
-7. **Errors**: `trackError(kind)` takes a kind from a closed set (`ApiTimeout`, `ChunkLoadFailed`), not a message.
+7. **Errors**: report them with `trackError(kind)`, which takes a kind from a closed set (`ApiTimeout`,
+   `ChunkLoadFailed`), never a message. Leave `jsErrorTracking` off: it reports the raw page URL and error message.
 8. **Dimensions**: the ids are per Matomo site, so create them in Matomo before using them. Keep the values low
    cardinality (a role, a plan, a language); Matomo stores at most 255 characters.
 9. **A Content-Security-Policy** must allow `https://analytics.nanoco.com.vn` in `script-src` and `connect-src`
@@ -327,8 +337,8 @@ For a plain `<script>` page with no modules, load `dist/browser.global.js` from 
 ## What the tracker does for you
 
 - Queues Matomo's configuration once, before any hit, and loads `matomo.js` once however many trackers exist.
-- Sets the sanitized current URL up front, so an error raised before the first page view does not report
-  `location.href` with a `?code=` attached.
+- Sets the sanitized current URL up front, so an event raised before the first page view reports it as the page
+  of the request, not `location.href` with a `?code=` attached.
 - Sanitizes a same-origin `document.referrer` for the first view of a page load (an external one is left alone),
   and chains referrers across single-page navigations.
 - Starts a new visit through `appendToTrackingUrl('new_visit=1')` around **one** page view only, so a heartbeat

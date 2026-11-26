@@ -100,6 +100,7 @@ describe('the one-time configuration', () => {
       cookieDomain: '*.example.com',
       requireCookieConsent: true,
       heartbeatSeconds: 30,
+      jsErrorTracking: true,
     }).push(['ping']);
 
     expect(queuedCommands()).toEqual([
@@ -117,8 +118,8 @@ describe('the one-time configuration', () => {
     ]);
   });
 
-  it('leaves out what is switched off', () => {
-    createTracker({ linkTracking: false, heartbeatSeconds: false, jsErrorTracking: false }).push(['ping']);
+  it('leaves out link tracking and the heartbeat when they are switched off', () => {
+    createTracker({ linkTracking: false, heartbeatSeconds: false }).push(['ping']);
 
     expect(queuedCommands()).toEqual([
       ['setTrackerUrl', `${MATOMO_URL}/matomo.php`],
@@ -126,6 +127,24 @@ describe('the one-time configuration', () => {
       ['setCustomUrl', `${PAGE_ORIGIN}/`],
       ['ping'],
     ]);
+  });
+
+  it('does not enable the matomo.js error tracking by default, which reports raw urls and messages', () => {
+    createTracker().push(['ping']);
+
+    expect(queuedCommands()).not.toContainEqual(['enableJSErrorTracking']);
+  });
+
+  it.each([[false], [undefined]])('does not enable it for jsErrorTracking: %s either', (jsErrorTracking) => {
+    createTracker({ jsErrorTracking }).push(['ping']);
+
+    expect(queuedCommands()).not.toContainEqual(['enableJSErrorTracking']);
+  });
+
+  it('enables it, after the heartbeat, only when jsErrorTracking is true', () => {
+    createTracker({ jsErrorTracking: true }).push(['ping']);
+
+    expect(queuedCommands()).toEqual([...DEFAULT_INIT_COMMANDS, ['enableJSErrorTracking'], ['ping']]);
   });
 
   it('reports the page it starts on without its query string or fragment', () => {

@@ -1,5 +1,5 @@
-import { M as MatomoTrackerOptions, a as MatomoTracker } from './types-THlumbrv.js';
-export { D as DimensionMap, b as DimensionValue, E as EcommerceCategory, c as EcommerceItem, d as EcommerceOrder, e as EcommerceProduct, f as MatomoCommand, g as MatomoEcommerce, P as PageView, S as SiteSearch, T as TrackedEvent, U as UserIdentity } from './types-THlumbrv.js';
+import { M as MatomoTrackerOptions, a as MatomoTracker } from './types-CN2TwLOZ.js';
+export { D as DimensionMap, b as DimensionValue, E as EcommerceCategory, c as EcommerceItem, d as EcommerceOrder, e as EcommerceProduct, f as MatomoCommand, g as MatomoEcommerce, P as PageView, S as SiteSearch, T as TrackedEvent, U as UserIdentity } from './types-CN2TwLOZ.js';
 
 /**
  * Creates a tracker. Nothing happens until it is first used: no script, no `_paq` writes.

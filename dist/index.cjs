@@ -13,7 +13,7 @@ function resolveConfig(options) {
     siteId: siteId != null ? siteId : 0,
     linkTracking: options.linkTracking !== false,
     heartbeatSeconds: resolveHeartbeat(options.heartbeatSeconds),
-    jsErrorTracking: options.jsErrorTracking !== false,
+    jsErrorTracking: options.jsErrorTracking === true,
     keepQueryParams: new Set((_a = options.keepQueryParams) != null ? _a : []),
     normalizePath: (_b = options.normalizePath) != null ? _b : identity,
     domains: (_c = options.domains) != null ? _c : [],

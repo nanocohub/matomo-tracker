@@ -11,9 +11,8 @@ export interface InitPage {
 /**
  * The configuration pushed once, before any hit.
  *
- * Setting the page URL up front means an event raised before the first page view (a JS error
- * on an OAuth callback page, say) reports that URL instead of `location.href` with its `?code=`
- * still attached. A same-origin referrer is set for the same reason: the first page view of
+ * Setting the page URL up front means an event raised before the first page view reports that
+ * URL as the page of the request, instead of `location.href` with an OAuth `?code=` still attached. A same-origin referrer is set for the same reason: the first page view of
  * the page the callback redirected to would otherwise carry the callback URL as `urlref`.
  */
 export function buildInitCommands(config: ResolvedConfig, page: InitPage): MatomoCommand[] {

@@ -11,7 +11,6 @@ export const DEFAULT_INIT_COMMANDS: unknown[][] = [
   ['setCustomUrl', `${PAGE_ORIGIN}/`],
   ['enableLinkTracking'],
   ['enableHeartBeatTimer', 15],
-  ['enableJSErrorTracking'],
 ];
 
 export function createTracker(overrides: Partial<MatomoTrackerOptions> = {}): MatomoTracker {

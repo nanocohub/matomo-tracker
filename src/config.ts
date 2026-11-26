@@ -29,7 +29,7 @@ export function resolveConfig(options: MatomoTrackerOptions): ResolvedConfig {
     siteId: siteId ?? 0,
     linkTracking: options.linkTracking !== false,
     heartbeatSeconds: resolveHeartbeat(options.heartbeatSeconds),
-    jsErrorTracking: options.jsErrorTracking !== false,
+    jsErrorTracking: options.jsErrorTracking === true,
     keepQueryParams: new Set(options.keepQueryParams ?? []),
     normalizePath: options.normalizePath ?? identity,
     domains: options.domains ?? [],

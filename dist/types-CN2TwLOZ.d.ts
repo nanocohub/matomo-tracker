@@ -15,7 +15,11 @@ interface MatomoTrackerOptions {
     linkTracking?: boolean;
     /** Matomo heartbeat interval in seconds, or `false` to turn it off. Default `15`. */
     heartbeatSeconds?: number | false;
-    /** Matomo `enableJSErrorTracking`. Default `true`. */
+    /**
+     * Matomo `enableJSErrorTracking`. Default `false`: matomo.js reports each uncaught error as an event whose
+     * action is the script URL (the page URL, query string included, for an inline script) and whose name is
+     * the raw error message, neither of which this package can sanitize. Prefer `trackError(kind)`.
+     */
     jsErrorTracking?: boolean;
     /** Page URLs keep ONLY these query parameters. Default: none. The #fragment is always dropped. */
     keepQueryParams?: string[];
