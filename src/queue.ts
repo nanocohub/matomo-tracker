@@ -14,6 +14,12 @@ type MatomoWindow = Window & { _paq?: CommandQueue | MatomoCommand[] };
  */
 export const MAX_QUEUED_COMMANDS = 500;
 
+/**
+ * Slots above the cap for the commands that must reach matomo.js whatever the queue holds
+ * (the ones that clear the user id on logout). Still bounded, so the queue cannot grow forever.
+ */
+export const RESERVED_QUEUE_COMMANDS = 100;
+
 export function isBrowser(): boolean {
   return typeof window !== 'undefined' && typeof document !== 'undefined';
 }
@@ -25,10 +31,11 @@ export function isBrowser(): boolean {
  * `appendToTrackingUrl new_visit=1` and the `appendToTrackingUrl ''` that clears it would turn
  * every later request into a new visit.
  */
-export function enqueue(commands: MatomoCommand[]): boolean {
+export function enqueue(commands: MatomoCommand[], options: { useReserve?: boolean } = {}): boolean {
   const target = window as MatomoWindow;
   const queue = target._paq ?? (target._paq = []);
-  if (Array.isArray(queue) && queue.length + commands.length > MAX_QUEUED_COMMANDS) return false;
+  const limit = MAX_QUEUED_COMMANDS + (options.useReserve ? RESERVED_QUEUE_COMMANDS : 0);
+  if (Array.isArray(queue) && queue.length + commands.length > limit) return false;
 
   commands.forEach((command) => queue.push(command));
   return true;

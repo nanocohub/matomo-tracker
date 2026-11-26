@@ -241,14 +241,16 @@ function decodeParamName(pair) {
 
 // src/queue.ts
 var MAX_QUEUED_COMMANDS = 500;
+var RESERVED_QUEUE_COMMANDS = 100;
 function isBrowser() {
   return typeof window !== "undefined" && typeof document !== "undefined";
 }
-function enqueue(commands) {
+function enqueue(commands, options = {}) {
   var _a;
   const target = window;
   const queue = (_a = target._paq) != null ? _a : target._paq = [];
-  if (Array.isArray(queue) && queue.length + commands.length > MAX_QUEUED_COMMANDS) return false;
+  const limit = MAX_QUEUED_COMMANDS + (options.useReserve ? RESERVED_QUEUE_COMMANDS : 0);
+  if (Array.isArray(queue) && queue.length + commands.length > limit) return false;
   commands.forEach((command) => queue.push(command));
   return true;
 }
@@ -329,8 +331,8 @@ function createMatomoTracker(options) {
     trackedOrderIds: /* @__PURE__ */ new Set()
   };
   const isActive = () => config.enabled && !state.scriptFailed && isBrowser();
-  function sendAll(commands) {
-    if (!enqueue(commands)) {
+  function sendAll(commands, options2 = {}) {
+    if (!enqueue(commands, options2)) {
       logger.warn("queue is full, commands dropped", commands);
       return false;
     }
@@ -348,12 +350,12 @@ function createMatomoTracker(options) {
       sameOriginReferrerUrl: buildSameOriginReferrerUrl(document.referrer, href, config)
     };
     sendAll(buildInitCommands(config, page));
-    injectMatomoScript(`${config.baseUrl}/matomo.js`, handleScriptFailure);
+    injectMatomoScript(`${config.baseUrl}/matomo.js`, () => turnTrackingOff("matomo.js could not be loaded"));
   }
-  function handleScriptFailure() {
+  function turnTrackingOff(reason) {
     state.scriptFailed = true;
     discardQueuedCommands();
-    logger.warn("matomo.js could not be loaded, tracking is off");
+    logger.warn(`${reason}, tracking is off`);
   }
   function run(action) {
     if (!isActive()) return;
@@ -404,12 +406,13 @@ function createMatomoTracker(options) {
     run(() => {
       var _a, _b;
       const deletions = ((_b = (_a = state.identity) == null ? void 0 : _a.dimensionIds) != null ? _b : []).map((id) => ["deleteCustomDimension", id]);
-      sendAll([["resetUserId"], ...deletions, ["setReferrerUrl", ""]]);
+      const clearingCommands = [["resetUserId"], ...deletions, ["setReferrerUrl", ""]];
       state.identity = null;
       state.lastViewUrl = null;
       state.pendingProduct = null;
       memory.forgetUserId();
       setNewVisitPending(true);
+      if (!sendAll(clearingCommands, { useReserve: true })) turnTrackingOff("the user id could not be cleared");
     });
   }
   function setDimensions(dimensions) {

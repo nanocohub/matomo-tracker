@@ -193,15 +193,120 @@ describe('other command groups at the queue cap', () => {
     expect(count('setCustomDimension')).toBe(0);
   });
 
-  it('still logs the tracker out when the reset did not fit: the next view that fits is a new visit', () => {
-    const tracker = createTracker();
-    tracker.identify({ userId: 'u1', dimensions: { 1: 'admin' } });
-    leaveRoom(2);
-    tracker.reset();
-    drainQueue();
+});
 
+interface ReplayedHit {
+  userId: unknown;
+  dimensions: Record<number, unknown>;
+  newVisit: boolean;
+}
+
+/** What matomo.js makes of the queue: the user id, dimensions and new visit flag each page view goes out with. */
+function replayHits(commands: unknown[][]): ReplayedHit[] {
+  const hits: ReplayedHit[] = [];
+  const dimensions: Record<number, unknown> = {};
+  let userId: unknown;
+  let appended: unknown = '';
+
+  for (const [name, first, second] of commands) {
+    if (name === 'setUserId') userId = first;
+    if (name === 'resetUserId') userId = undefined;
+    if (name === 'setCustomDimension') dimensions[first as number] = second;
+    if (name === 'deleteCustomDimension') delete dimensions[first as number];
+    if (name === 'appendToTrackingUrl') appended = first;
+    if (name === 'trackPageView') hits.push({ userId, dimensions: { ...dimensions }, newVisit: appended === 'new_visit=1' });
+  }
+  return hits;
+}
+
+/** matomo.js replays the array it finds, then replaces `_paq` with a queue object that has no cap. */
+function loadMatomo(): unknown[][] {
+  const replayed = queuedCommands();
+  (window as { _paq?: unknown })._paq = { push: (command: unknown[]) => replayed.push(command) };
+  return replayed;
+}
+
+describe('reset at the queue cap', () => {
+  const dimensions = { 1: 'a', 2: 'b', 3: 'c', 4: 'd', 5: 'e' };
+  const resetCommands = [
+    ['resetUserId'],
+    ['deleteCustomDimension', 1],
+    ['deleteCustomDimension', 2],
+    ['deleteCustomDimension', 3],
+    ['deleteCustomDimension', 4],
+    ['deleteCustomDimension', 5],
+    ['setReferrerUrl', ''],
+  ];
+
+  /** Identifies a user with 5 dimensions (6 commands) so that exactly `room` commands fit afterwards. */
+  function identifiedWithRoomLeft(room: number) {
+    const tracker = createTracker();
+    tracker.push(['start']);
+    leaveRoom(6 + room);
+    tracker.identify({ userId: 'userA', dimensions });
+    expect(queuedCommands()).toHaveLength(CAP - room);
+    return tracker;
+  }
+
+  it('queues its commands above the cap when they do not fit under it', () => {
+    const tracker = identifiedWithRoomLeft(4);
+
+    tracker.reset();
+
+    expect(queuedCommands()).toHaveLength(CAP - 4 + resetCommands.length);
+    expect(queuedCommands().slice(-resetCommands.length)).toEqual(resetCommands);
+  });
+
+  it('is queued even when the queue is already full', () => {
+    const tracker = createTracker();
+    tracker.push(['start']);
+    leaveRoom(0);
+
+    tracker.reset();
+
+    expect(queuedCommands().slice(-2)).toEqual([['resetUserId'], ['setReferrerUrl', '']]);
+  });
+
+  it('makes the next view go out as a new visit with no user id and no dimensions', () => {
+    const tracker = identifiedWithRoomLeft(4);
+    tracker.reset();
+
+    const replayed = loadMatomo();
     tracker.trackPageView({ url: '/login' });
 
-    expect(count('appendToTrackingUrl', 'new_visit=1')).toBe(1);
+    const hits = replayHits(replayed);
+    expect(hits).toEqual([{ userId: undefined, dimensions: {}, newVisit: true }]);
+  });
+
+  it('would have sent the previous user id if its commands had been dropped', () => {
+    const tracker = identifiedWithRoomLeft(4);
+    const stale = replayHits([...queuedCommands(), ['trackPageView']]);
+
+    expect(stale).toEqual([{ userId: 'userA', dimensions, newVisit: false }]);
+    tracker.reset();
+  });
+
+  it('turns tracking off, rather than misattribute later hits, when even the reserve is full', () => {
+    const tracker = createTracker();
+    tracker.push(['start']);
+    leaveRoom(-99);
+
+    tracker.reset();
+
+    expect(tracker.enabled).toBe(false);
+    expect(queuedCommands()).toEqual([]);
+  });
+
+  it('never lets the queue grow past the cap plus the reserve, however often it is called', () => {
+    const tracker = createTracker();
+    let longest = 0;
+
+    for (let call = 0; call < 1000; call += 1) {
+      tracker.reset();
+      longest = Math.max(longest, queuedCommands().length);
+    }
+
+    expect(longest).toBeLessThanOrEqual(CAP + 100);
+    expect(tracker.enabled).toBe(false);
   });
 });

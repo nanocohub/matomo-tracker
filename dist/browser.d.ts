@@ -118,7 +118,8 @@ interface MatomoTracker {
  * method is a no-op.
  *
  * Every operation that needs several commands queues them as one group, and changes the
- * tracker's own state only once the group was queued; see `enqueue`.
+ * tracker's own state only once the group was queued; see `enqueue`. The one exception is
+ * `reset`, whose commands may use a reserve above the cap.
  */
 declare function createMatomoTracker(options: MatomoTrackerOptions): MatomoTracker;
 

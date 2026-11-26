@@ -23,7 +23,7 @@ yarn add "@nanoco/matomo-tracker@github:nanocohub/matomo-tracker#v1.0.0"   # yar
 npm i "github:nanocohub/matomo-tracker#v1.0.0"                              # npm
 ```
 
-Always pin a tag, never a branch. While the first release is being rolled out the tag is `v1.0.0-rc.4`.
+Always pin a tag, never a branch. While the first release is being rolled out the tag is `v1.0.0-rc.5`.
 React is an optional peer (`>=17`), needed only for `@nanoco/matomo-tracker/react`.
 
 | Import                           | What                                                                             |
@@ -115,7 +115,8 @@ view start a new visit, and so does a different one after a hard reload of the t
 
 **`reset()`** is for logout. It clears the user id and every dimension set through `identify`, clears the
 referrer, and makes the **next** page view a new visit (`new_visit=1` on that one request only). It never sends
-a hit itself, and it survives the hard reload that many logouts end in (`location.href = '/login'`).
+a hit itself, and it survives the hard reload that many logouts end in (`location.href = '/login'`). Its commands
+are always queued, even before matomo.js has loaded and the queue is full.
 
 **`setDimensions(dimensions)`** is for dimensions that are not about the user (language, tenant). `reset()`
 leaves them alone.
@@ -332,9 +333,15 @@ For a plain `<script>` page with no modules, load `dist/browser.global.js` from 
 - Starts a new visit through `appendToTrackingUrl('new_visit=1')` around **one** page view only, so a heartbeat
   or an event sent in between cannot open a phantom visit.
 - Bounds the pre-load queue at 500 commands, and turns tracking off when matomo.js fails to load. An operation
-  that needs several commands (a page view with a new visit, `identify`, `reset`, a cart or an order) is queued
-  whole or not at all, and the tracker changes its own state only after the commands were queued, so a full queue
-  can never leave a new visit flag set or mark a dropped page view or order as done.
+  that needs several commands (a page view with a new visit, `identify`, `setDimensions`, a cart or an order) is
+  queued whole or not at all, and the tracker changes its own state only after those commands were queued. A
+  full queue therefore never leaves a new visit flag set without the command that clears it, and a dropped page
+  view, `identify` or order is tried again instead of being remembered as done.
+- `reset()` is the one exception: its commands (the user id, the dimensions and the referrer being cleared) use a
+  reserve of 100 commands above the cap, so they always reach matomo.js before the next hit. Without them that hit
+  would go out as a new visit still carrying the previous user's id and dimensions. If even the reserve is full
+  (about 300 `reset()` calls while matomo.js has still not loaded), tracking is turned off rather than misattribute
+  what follows.
 - Keeps working from memory when `sessionStorage` is blocked.
 
 ## Debugging

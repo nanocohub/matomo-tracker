@@ -1,6 +1,6 @@
 {
   "name": "@nanoco/matomo-tracker",
-  "version": "1.0.0-rc.4",
+  "version": "1.0.0-rc.5",
   "description": "Shared Matomo tracker for Nanoco web apps",
   "private": true,
   "license": "UNLICENSED",

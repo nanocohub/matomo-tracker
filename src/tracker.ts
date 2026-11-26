@@ -57,7 +57,8 @@ interface TrackerState {
  * method is a no-op.
  *
  * Every operation that needs several commands queues them as one group, and changes the
- * tracker's own state only once the group was queued; see `enqueue`.
+ * tracker's own state only once the group was queued; see `enqueue`. The one exception is
+ * `reset`, whose commands may use a reserve above the cap.
  */
 export function createMatomoTracker(options: MatomoTrackerOptions): MatomoTracker {
   const config = resolveConfig(options);
@@ -77,8 +78,8 @@ export function createMatomoTracker(options: MatomoTrackerOptions): MatomoTracke
   const isActive = (): boolean => config.enabled && !state.scriptFailed && isBrowser();
 
   /** Returns whether the commands were queued, all of them or none. */
-  function sendAll(commands: MatomoCommand[]): boolean {
-    if (!enqueue(commands)) {
+  function sendAll(commands: MatomoCommand[], options: { useReserve?: boolean } = {}): boolean {
+    if (!enqueue(commands, options)) {
       logger.warn('queue is full, commands dropped', commands);
       return false;
     }
@@ -99,13 +100,13 @@ export function createMatomoTracker(options: MatomoTrackerOptions): MatomoTracke
       sameOriginReferrerUrl: buildSameOriginReferrerUrl(document.referrer, href, config),
     };
     sendAll(buildInitCommands(config, page));
-    injectMatomoScript(`${config.baseUrl}/matomo.js`, handleScriptFailure);
+    injectMatomoScript(`${config.baseUrl}/matomo.js`, () => turnTrackingOff('matomo.js could not be loaded'));
   }
 
-  function handleScriptFailure(): void {
+  function turnTrackingOff(reason: string): void {
     state.scriptFailed = true;
     discardQueuedCommands();
-    logger.warn('matomo.js could not be loaded, tracking is off');
+    logger.warn(`${reason}, tracking is off`);
   }
 
   function run(action: () => void): void {
@@ -166,14 +167,18 @@ export function createMatomoTracker(options: MatomoTrackerOptions): MatomoTracke
     run(() => {
       const deletions = (state.identity?.dimensionIds ?? []).map((id): MatomoCommand => ['deleteCustomDimension', id]);
       // Matomo keeps the previous page as the referrer otherwise, and the new visit would open with it.
-      sendAll([['resetUserId'], ...deletions, ['setReferrerUrl', '']]);
+      const clearingCommands: MatomoCommand[] = [['resetUserId'], ...deletions, ['setReferrerUrl', '']];
 
-      // Even when the queue had no room the tracker itself is logged out: the next view starts a new visit.
       state.identity = null;
       state.lastViewUrl = null;
       state.pendingProduct = null;
       memory.forgetUserId();
       setNewVisitPending(true);
+
+      // These must reach matomo.js before the next hit, whatever the queue holds: without them that hit
+      // would go out as a new visit that still carries the previous user's id and dimensions. If even
+      // the reserve is full, tracking stops rather than misattribute everything that follows.
+      if (!sendAll(clearingCommands, { useReserve: true })) turnTrackingOff('the user id could not be cleared');
     });
   }
 
