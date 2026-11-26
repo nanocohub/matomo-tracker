@@ -19,7 +19,6 @@ import { injectMatomoScript } from './script';
 import { buildSiteSearchCommand } from './site-search';
 import { createTabMemory } from './tab-memory';
 import type {
-  EcommerceItem,
   MatomoCommand,
   MatomoEcommerce,
   MatomoTracker,
@@ -56,6 +55,9 @@ interface TrackerState {
  * The rule every method keeps: analytics never throws and never changes what the app does.
  * Server side, with an invalid configuration, or after matomo.js failed to load, every
  * method is a no-op.
+ *
+ * Every operation that needs several commands queues them as one group, and changes the
+ * tracker's own state only once the group was queued; see `enqueue`.
  */
 export function createMatomoTracker(options: MatomoTrackerOptions): MatomoTracker {
   const config = resolveConfig(options);
@@ -74,13 +76,17 @@ export function createMatomoTracker(options: MatomoTrackerOptions): MatomoTracke
 
   const isActive = (): boolean => config.enabled && !state.scriptFailed && isBrowser();
 
-  function send(command: MatomoCommand): void {
-    if (enqueue(command)) {
-      logger.command(command);
-    } else {
-      logger.warn('queue is full, command dropped', command);
+  /** Returns whether the commands were queued, all of them or none. */
+  function sendAll(commands: MatomoCommand[]): boolean {
+    if (!enqueue(commands)) {
+      logger.warn('queue is full, commands dropped', commands);
+      return false;
     }
+    commands.forEach((command) => logger.command(command));
+    return true;
   }
+
+  const send = (command: MatomoCommand): boolean => sendAll([command]);
 
   function start(): void {
     if (state.started) return;
@@ -92,7 +98,7 @@ export function createMatomoTracker(options: MatomoTrackerOptions): MatomoTracke
       currentUrl: buildPageUrl(href, href, config),
       sameOriginReferrerUrl: buildSameOriginReferrerUrl(document.referrer, href, config),
     };
-    buildInitCommands(config, page).forEach(send);
+    sendAll(buildInitCommands(config, page));
     injectMatomoScript(`${config.baseUrl}/matomo.js`, handleScriptFailure);
   }
 
@@ -112,25 +118,10 @@ export function createMatomoTracker(options: MatomoTrackerOptions): MatomoTracke
     }
   }
 
-  function sendDimensions(entries: DimensionEntry[]): void {
-    entries.forEach((entry) => send(dimensionCommand(entry)));
-  }
-
   /** Kept in the tab's memory too, so a hard reload before the next page view does not forget it. */
   function setNewVisitPending(pending: boolean): void {
     state.newVisitPending = pending;
     memory.writeNewVisitPending(pending);
-  }
-
-  /** The hit is sent as the first request of a new visit; the flag lives for this one request only. */
-  function sendHit(hit: MatomoCommand): void {
-    const startsNewVisit = state.newVisitPending;
-    if (startsNewVisit) send(['appendToTrackingUrl', NEW_VISIT_PARAMETER]);
-    send(hit);
-    if (startsNewVisit) {
-      send(['appendToTrackingUrl', '']);
-      setNewVisitPending(false);
-    }
   }
 
   function isAccountSwitch(userId: string): boolean {
@@ -139,11 +130,11 @@ export function createMatomoTracker(options: MatomoTrackerOptions): MatomoTracke
   }
 
   /** The new dimensions replace the previous identity's: any it no longer has are removed. */
-  function applyIdentityDimensions(entries: DimensionEntry[]): void {
+  function identityDimensionCommands(entries: DimensionEntry[]): MatomoCommand[] {
     const removed = (state.identity?.dimensionIds ?? [])
       .filter((id) => !entries.some(([entryId]) => entryId === id))
       .map((id): DimensionEntry => [id, null]);
-    sendDimensions([...entries, ...removed].sort(([left], [right]) => left - right));
+    return [...entries, ...removed].sort(([left], [right]) => left - right).map(dimensionCommand);
   }
 
   function identify(user: UserIdentity): void {
@@ -158,9 +149,10 @@ export function createMatomoTracker(options: MatomoTrackerOptions): MatomoTracke
       const key = JSON.stringify([userId, entries]);
       if (state.identity?.key === key) return;
 
-      if (isAccountSwitch(userId)) setNewVisitPending(true);
-      send(['setUserId', userId]);
-      applyIdentityDimensions(entries);
+      const switchesAccount = isAccountSwitch(userId);
+      if (!sendAll([['setUserId', userId], ...identityDimensionCommands(entries)])) return;
+
+      if (switchesAccount) setNewVisitPending(true);
       state.identity = {
         userId,
         key,
@@ -172,10 +164,11 @@ export function createMatomoTracker(options: MatomoTrackerOptions): MatomoTracke
 
   function reset(): void {
     run(() => {
-      send(['resetUserId']);
-      (state.identity?.dimensionIds ?? []).forEach((id) => send(['deleteCustomDimension', id]));
+      const deletions = (state.identity?.dimensionIds ?? []).map((id): MatomoCommand => ['deleteCustomDimension', id]);
       // Matomo keeps the previous page as the referrer otherwise, and the new visit would open with it.
-      send(['setReferrerUrl', '']);
+      sendAll([['resetUserId'], ...deletions, ['setReferrerUrl', '']]);
+
+      // Even when the queue had no room the tracker itself is logged out: the next view starts a new visit.
       state.identity = null;
       state.lastViewUrl = null;
       state.pendingProduct = null;
@@ -185,21 +178,22 @@ export function createMatomoTracker(options: MatomoTrackerOptions): MatomoTracke
   }
 
   function setDimensions(dimensions: UserIdentity['dimensions']): void {
-    run(() => sendDimensions(toDimensionEntries(dimensions)));
+    run(() => void sendAll(toDimensionEntries(dimensions).map(dimensionCommand)));
   }
 
-  function sendPendingProductView(): void {
-    if (state.pendingProduct === null) return;
-    send(productViewCommand(state.pendingProduct));
-    state.pendingProduct = null;
-  }
+  function pageViewCommands(url: string, title: string): MatomoCommand[] {
+    const commands: MatomoCommand[] = [];
+    if (state.lastViewUrl !== null) commands.push(['setReferrerUrl', state.lastViewUrl]);
+    commands.push(['setCustomUrl', url], ['setDocumentTitle', title]);
+    if (state.pendingProduct !== null) commands.push(productViewCommand(state.pendingProduct));
 
-  function sendPageView(url: string, title: string): void {
-    if (state.lastViewUrl !== null) send(['setReferrerUrl', state.lastViewUrl]);
-    send(['setCustomUrl', url]);
-    send(['setDocumentTitle', title]);
-    sendPendingProductView();
-    sendHit(['trackPageView']);
+    // The new visit flag applies to every request after it, so it is set for this one hit and cleared right after.
+    if (state.newVisitPending) {
+      commands.push(['appendToTrackingUrl', NEW_VISIT_PARAMETER], ['trackPageView'], ['appendToTrackingUrl', '']);
+    } else {
+      commands.push(['trackPageView']);
+    }
+    return commands;
   }
 
   function trackPageView(view?: PageView): void {
@@ -210,18 +204,19 @@ export function createMatomoTracker(options: MatomoTrackerOptions): MatomoTracke
         return;
       }
       if (view?.force !== true && url === state.lastViewUrl) return;
+      if (!sendAll(pageViewCommands(url, view?.title ?? document.title))) return;
 
-      sendPageView(url, view?.title ?? document.title);
       state.lastViewUrl = url;
       state.errorEventsOnPage = 0;
+      state.pendingProduct = null;
+      if (state.newVisitPending) setNewVisitPending(false);
     });
   }
 
   /** Returns whether an event was actually sent. */
   function sendEvent(event: TrackedEvent): boolean {
     const command = buildEventCommand(event, logger);
-    if (command !== null) send(command);
-    return command !== null;
+    return command !== null && send(command);
   }
 
   function trackEvent(event: TrackedEvent): void {
@@ -249,11 +244,6 @@ export function createMatomoTracker(options: MatomoTrackerOptions): MatomoTracke
     });
   }
 
-  function sendCart(items: EcommerceItem[]): void {
-    send(clearCartCommand());
-    itemCommands(items).forEach(send);
-  }
-
   const ecommerce: MatomoEcommerce = {
     productView(product) {
       run(() => {
@@ -272,8 +262,7 @@ export function createMatomoTracker(options: MatomoTrackerOptions): MatomoTracke
           logger.warn('cartUpdate ignored: grandTotal must be a number', grandTotal);
           return;
         }
-        sendCart(items);
-        send(cartUpdateCommand(grandTotal));
+        sendAll([clearCartCommand(), ...itemCommands(items), cartUpdateCommand(grandTotal)]);
       });
     },
 
@@ -288,9 +277,9 @@ export function createMatomoTracker(options: MatomoTrackerOptions): MatomoTracke
           logger.warn(`order "${orderId}" ignored: it was already tracked in this page session`);
           return;
         }
-        sendCart(order.items);
-        send(orderCommand(order, orderId));
-        state.trackedOrderIds.add(orderId);
+        if (sendAll([clearCartCommand(), ...itemCommands(order.items), orderCommand(order, orderId)])) {
+          state.trackedOrderIds.add(orderId);
+        }
       });
     },
   };

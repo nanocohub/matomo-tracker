@@ -7,6 +7,9 @@ export { D as DimensionMap, b as DimensionValue, E as EcommerceCategory, c as Ec
  * The rule every method keeps: analytics never throws and never changes what the app does.
  * Server side, with an invalid configuration, or after matomo.js failed to load, every
  * method is a no-op.
+ *
+ * Every operation that needs several commands queues them as one group, and changes the
+ * tracker's own state only once the group was queued; see `enqueue`.
  */
 declare function createMatomoTracker(options: MatomoTrackerOptions): MatomoTracker;
 

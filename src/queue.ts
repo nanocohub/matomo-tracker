@@ -18,12 +18,19 @@ export function isBrowser(): boolean {
   return typeof window !== 'undefined' && typeof document !== 'undefined';
 }
 
-/** Returns `false` when the command was dropped because the queue is full. */
-export function enqueue(command: MatomoCommand): boolean {
+/**
+ * Queues the commands together or not at all, and returns whether they were queued.
+ *
+ * Commands that belong together must never be split by the cap. A hit dropped between
+ * `appendToTrackingUrl new_visit=1` and the `appendToTrackingUrl ''` that clears it would turn
+ * every later request into a new visit.
+ */
+export function enqueue(commands: MatomoCommand[]): boolean {
   const target = window as MatomoWindow;
   const queue = target._paq ?? (target._paq = []);
-  if (Array.isArray(queue) && queue.length >= MAX_QUEUED_COMMANDS) return false;
-  queue.push(command);
+  if (Array.isArray(queue) && queue.length + commands.length > MAX_QUEUED_COMMANDS) return false;
+
+  commands.forEach((command) => queue.push(command));
   return true;
 }
 

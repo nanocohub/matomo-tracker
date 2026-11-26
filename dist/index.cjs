@@ -244,12 +244,12 @@ var MAX_QUEUED_COMMANDS = 500;
 function isBrowser() {
   return typeof window !== "undefined" && typeof document !== "undefined";
 }
-function enqueue(command) {
+function enqueue(commands) {
   var _a;
   const target = window;
   const queue = (_a = target._paq) != null ? _a : target._paq = [];
-  if (Array.isArray(queue) && queue.length >= MAX_QUEUED_COMMANDS) return false;
-  queue.push(command);
+  if (Array.isArray(queue) && queue.length + commands.length > MAX_QUEUED_COMMANDS) return false;
+  commands.forEach((command) => queue.push(command));
   return true;
 }
 function discardQueuedCommands() {
@@ -329,13 +329,15 @@ function createMatomoTracker(options) {
     trackedOrderIds: /* @__PURE__ */ new Set()
   };
   const isActive = () => config.enabled && !state.scriptFailed && isBrowser();
-  function send(command) {
-    if (enqueue(command)) {
-      logger.command(command);
-    } else {
-      logger.warn("queue is full, command dropped", command);
+  function sendAll(commands) {
+    if (!enqueue(commands)) {
+      logger.warn("queue is full, commands dropped", commands);
+      return false;
     }
+    commands.forEach((command) => logger.command(command));
+    return true;
   }
+  const send = (command) => sendAll([command]);
   function start() {
     if (state.started) return;
     state.started = true;
@@ -345,7 +347,7 @@ function createMatomoTracker(options) {
       currentUrl: buildPageUrl(href, href, config),
       sameOriginReferrerUrl: buildSameOriginReferrerUrl(document.referrer, href, config)
     };
-    buildInitCommands(config, page).forEach(send);
+    sendAll(buildInitCommands(config, page));
     injectMatomoScript(`${config.baseUrl}/matomo.js`, handleScriptFailure);
   }
   function handleScriptFailure() {
@@ -362,31 +364,19 @@ function createMatomoTracker(options) {
       logger.warn("call failed", error);
     }
   }
-  function sendDimensions(entries) {
-    entries.forEach((entry) => send(dimensionCommand(entry)));
-  }
   function setNewVisitPending(pending) {
     state.newVisitPending = pending;
     memory.writeNewVisitPending(pending);
-  }
-  function sendHit(hit) {
-    const startsNewVisit = state.newVisitPending;
-    if (startsNewVisit) send(["appendToTrackingUrl", NEW_VISIT_PARAMETER]);
-    send(hit);
-    if (startsNewVisit) {
-      send(["appendToTrackingUrl", ""]);
-      setNewVisitPending(false);
-    }
   }
   function isAccountSwitch(userId) {
     var _a, _b;
     const previousUserId = (_b = (_a = state.identity) == null ? void 0 : _a.userId) != null ? _b : memory.readUserId();
     return previousUserId !== null && previousUserId !== void 0 && previousUserId !== userId;
   }
-  function applyIdentityDimensions(entries) {
+  function identityDimensionCommands(entries) {
     var _a, _b;
     const removed = ((_b = (_a = state.identity) == null ? void 0 : _a.dimensionIds) != null ? _b : []).filter((id) => !entries.some(([entryId]) => entryId === id)).map((id) => [id, null]);
-    sendDimensions([...entries, ...removed].sort(([left], [right]) => left - right));
+    return [...entries, ...removed].sort(([left], [right]) => left - right).map(dimensionCommand);
   }
   function identify(user) {
     run(() => {
@@ -399,9 +389,9 @@ function createMatomoTracker(options) {
       const entries = toDimensionEntries(user.dimensions);
       const key = JSON.stringify([userId, entries]);
       if (((_a = state.identity) == null ? void 0 : _a.key) === key) return;
-      if (isAccountSwitch(userId)) setNewVisitPending(true);
-      send(["setUserId", userId]);
-      applyIdentityDimensions(entries);
+      const switchesAccount = isAccountSwitch(userId);
+      if (!sendAll([["setUserId", userId], ...identityDimensionCommands(entries)])) return;
+      if (switchesAccount) setNewVisitPending(true);
       state.identity = {
         userId,
         key,
@@ -413,9 +403,8 @@ function createMatomoTracker(options) {
   function reset() {
     run(() => {
       var _a, _b;
-      send(["resetUserId"]);
-      ((_b = (_a = state.identity) == null ? void 0 : _a.dimensionIds) != null ? _b : []).forEach((id) => send(["deleteCustomDimension", id]));
-      send(["setReferrerUrl", ""]);
+      const deletions = ((_b = (_a = state.identity) == null ? void 0 : _a.dimensionIds) != null ? _b : []).map((id) => ["deleteCustomDimension", id]);
+      sendAll([["resetUserId"], ...deletions, ["setReferrerUrl", ""]]);
       state.identity = null;
       state.lastViewUrl = null;
       state.pendingProduct = null;
@@ -424,19 +413,19 @@ function createMatomoTracker(options) {
     });
   }
   function setDimensions(dimensions) {
-    run(() => sendDimensions(toDimensionEntries(dimensions)));
+    run(() => void sendAll(toDimensionEntries(dimensions).map(dimensionCommand)));
   }
-  function sendPendingProductView() {
-    if (state.pendingProduct === null) return;
-    send(productViewCommand(state.pendingProduct));
-    state.pendingProduct = null;
-  }
-  function sendPageView(url, title) {
-    if (state.lastViewUrl !== null) send(["setReferrerUrl", state.lastViewUrl]);
-    send(["setCustomUrl", url]);
-    send(["setDocumentTitle", title]);
-    sendPendingProductView();
-    sendHit(["trackPageView"]);
+  function pageViewCommands(url, title) {
+    const commands = [];
+    if (state.lastViewUrl !== null) commands.push(["setReferrerUrl", state.lastViewUrl]);
+    commands.push(["setCustomUrl", url], ["setDocumentTitle", title]);
+    if (state.pendingProduct !== null) commands.push(productViewCommand(state.pendingProduct));
+    if (state.newVisitPending) {
+      commands.push(["appendToTrackingUrl", NEW_VISIT_PARAMETER], ["trackPageView"], ["appendToTrackingUrl", ""]);
+    } else {
+      commands.push(["trackPageView"]);
+    }
+    return commands;
   }
   function trackPageView(view) {
     run(() => {
@@ -447,15 +436,16 @@ function createMatomoTracker(options) {
         return;
       }
       if ((view == null ? void 0 : view.force) !== true && url === state.lastViewUrl) return;
-      sendPageView(url, (_b = view == null ? void 0 : view.title) != null ? _b : document.title);
+      if (!sendAll(pageViewCommands(url, (_b = view == null ? void 0 : view.title) != null ? _b : document.title))) return;
       state.lastViewUrl = url;
       state.errorEventsOnPage = 0;
+      state.pendingProduct = null;
+      if (state.newVisitPending) setNewVisitPending(false);
     });
   }
   function sendEvent(event) {
     const command = buildEventCommand(event, logger);
-    if (command !== null) send(command);
-    return command !== null;
+    return command !== null && send(command);
   }
   function trackEvent(event) {
     run(() => void sendEvent(event));
@@ -479,10 +469,6 @@ function createMatomoTracker(options) {
       if (sendEvent({ category: ERROR_EVENT_CATEGORY, action: kind })) state.errorEventsOnPage += 1;
     });
   }
-  function sendCart(items) {
-    send(clearCartCommand());
-    itemCommands(items).forEach(send);
-  }
   const ecommerce = {
     productView(product) {
       run(() => {
@@ -500,8 +486,7 @@ function createMatomoTracker(options) {
           logger.warn("cartUpdate ignored: grandTotal must be a number", grandTotal);
           return;
         }
-        sendCart(items);
-        send(cartUpdateCommand(grandTotal));
+        sendAll([clearCartCommand(), ...itemCommands(items), cartUpdateCommand(grandTotal)]);
       });
     },
     order(order) {
@@ -515,9 +500,9 @@ function createMatomoTracker(options) {
           logger.warn(`order "${orderId}" ignored: it was already tracked in this page session`);
           return;
         }
-        sendCart(order.items);
-        send(orderCommand(order, orderId));
-        state.trackedOrderIds.add(orderId);
+        if (sendAll([clearCartCommand(), ...itemCommands(order.items), orderCommand(order, orderId)])) {
+          state.trackedOrderIds.add(orderId);
+        }
       });
     }
   };
