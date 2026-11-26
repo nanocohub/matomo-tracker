@@ -1,0 +1,78 @@
+import { toWellFormed } from './text';
+
+export interface PageUrlRules {
+  keepQueryParams: ReadonlySet<string>;
+  normalizePath: (path: string) => string;
+}
+
+/**
+ * The URL Matomo sees: origin + normalized path + whitelisted query parameters.
+ * Everything else (other parameters such as OAuth `?code=`, the #fragment, credentials) is dropped.
+ * Returns `null` for input that is not an http(s) URL.
+ */
+export function buildPageUrl(input: string, baseHref: string, rules: PageUrlRules): string | null {
+  const parsed = parseUrl(input, baseHref);
+  if (parsed === null) return null;
+
+  const path = normalizePathname(parsed.pathname, rules.normalizePath);
+  const query = keepQueryParams(parsed.search, rules.keepQueryParams);
+  return `${parsed.origin}${path}${query}`;
+}
+
+/**
+ * The sanitized form of `document.referrer`, but only when it is a page of the same origin
+ * (typically the OAuth callback that redirected to this page, `?code=` and all).
+ * Returns `null` for an empty or external referrer: browsers send only the origin of a
+ * cross-origin referrer by default, and Matomo needs it as it is for referrer attribution.
+ */
+export function buildSameOriginReferrerUrl(referrer: string, pageHref: string, rules: PageUrlRules): string | null {
+  const parsedReferrer = referrer ? parseUrl(referrer) : null;
+  const parsedPage = parseUrl(pageHref);
+  if (parsedReferrer === null || parsedPage === null || parsedReferrer.origin !== parsedPage.origin) return null;
+
+  return buildPageUrl(referrer, pageHref, rules);
+}
+
+/** Without a base, only an absolute URL parses. */
+function parseUrl(input: string, baseHref?: string): URL | null {
+  try {
+    const parsed = new URL(input, baseHref);
+    return parsed.protocol === 'http:' || parsed.protocol === 'https:' ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+function normalizePathname(pathname: string, normalize: (path: string) => string): string {
+  try {
+    const normalized = normalize(pathname);
+    // The parsed pathname is percent-encoded, but the app's normalizer may return any text.
+    if (typeof normalized === 'string' && normalized.length > 0) {
+      const path = toWellFormed(normalized);
+      return path.startsWith('/') ? path : `/${path}`;
+    }
+  } catch {
+    // A faulty normalizer must not stop the page view: fall back to the raw path.
+  }
+  return pathname;
+}
+
+/** Filters the raw query string so the surviving parameters keep their original encoding and order. */
+function keepQueryParams(search: string, keep: ReadonlySet<string>): string {
+  if (keep.size === 0 || search.length <= 1) return '';
+
+  const kept = search
+    .slice(1)
+    .split('&')
+    .filter((pair) => pair.length > 0 && keep.has(decodeParamName(pair)));
+  return kept.length > 0 ? `?${kept.join('&')}` : '';
+}
+
+function decodeParamName(pair: string): string {
+  const rawName = pair.split('=')[0] ?? '';
+  try {
+    return decodeURIComponent(rawName.replace(/\+/g, ' '));
+  } catch {
+    return rawName;
+  }
+}
