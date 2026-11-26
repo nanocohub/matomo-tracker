@@ -1,4 +1,5 @@
-import { cleanText, isFiniteNumber } from './event';
+import { isFiniteNumber } from './event';
+import { cleanText, truncateText } from './text';
 import type { MatomoCommand, SiteSearch } from './types';
 
 export const MAX_SEARCH_KEYWORD_LENGTH = 100;
@@ -10,7 +11,7 @@ export const MAX_SEARCH_KEYWORD_LENGTH = 100;
  * left out entirely: passing `false` would be recorded as `search_count=false`, a zero.
  */
 export function buildSiteSearchCommand(search: SiteSearch): MatomoCommand | null {
-  const keyword = cleanText(search?.keyword).slice(0, MAX_SEARCH_KEYWORD_LENGTH);
+  const keyword = truncateText(cleanText(search?.keyword), MAX_SEARCH_KEYWORD_LENGTH);
   if (!keyword) return null;
 
   const category = cleanText(search.category) || false;

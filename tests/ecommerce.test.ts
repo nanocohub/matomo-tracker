@@ -54,7 +54,7 @@ describe('ecommerce.productView', () => {
     expect(commandsAfterInit().slice(queuedBefore)).toEqual([
       ['setCustomUrl', `${PAGE_ORIGIN}/products/1`],
       ['setDocumentTitle', 'Router'],
-      ['appendToTrackingUrl', 'new_visit=1&_pks=SKU-1&_pkn=&_pkc='],
+      ['appendToTrackingUrl', 'new_visit=1&_pks=SKU-1'],
       ['trackPageView'],
       CLEAR_PARAMETERS,
     ]);
@@ -70,7 +70,7 @@ describe('ecommerce.productView', () => {
     tracker.trackEvent({ category: 'Cart', action: 'Update' });
 
     expect(parametersPerHit()).toEqual([
-      ['trackPageView', { _pks: 'SKU-1', _pkn: 'Router', _pkc: '' }],
+      ['trackPageView', { _pks: 'SKU-1', _pkn: 'Router' }],
       ['trackEvent', {}],
       ['trackPageView', {}],
       ['trackEvent', {}],
@@ -92,13 +92,27 @@ describe('ecommerce.productView', () => {
     expect(commandsAfterInit().some(([name]) => name === 'appendToTrackingUrl')).toBe(false);
   });
 
-  it('uses empty values for an absent name and category, and leaves an absent price out', () => {
+  it('leaves out an absent name, category and price, since Matomo stores an empty one as "Value not defined"', () => {
     const tracker = createTracker();
-    tracker.ecommerce.productView({ sku: 'SKU-1' });
+    tracker.ecommerce.productView({ sku: 'SKU-1', name: '  ', category: ['', ' '] });
 
     tracker.trackPageView({ url: '/products/1' });
 
-    expect(commandsAfterInit()[2]).toEqual(['appendToTrackingUrl', '_pks=SKU-1&_pkn=&_pkc=']);
+    expect(commandsAfterInit()[2]).toEqual(['appendToTrackingUrl', '_pks=SKU-1']);
+  });
+
+  it('sends a category without a name, and a name without a category', () => {
+    const tracker = createTracker();
+    tracker.ecommerce.productView({ sku: 'SKU-1', category: 'Network' });
+    tracker.trackPageView({ url: '/products/1' });
+    tracker.ecommerce.productView({ sku: 'SKU-2', name: 'Cable' });
+
+    tracker.trackPageView({ url: '/products/2' });
+
+    expect(parametersPerHit().map(([, parameters]) => parameters)).toEqual([
+      { _pks: 'SKU-1', _pkc: 'Network' },
+      { _pks: 'SKU-2', _pkn: 'Cable' },
+    ]);
   });
 
   it('keeps a price of zero', () => {
@@ -182,7 +196,7 @@ describe('ecommerce.productView', () => {
 
     expect(warn).toHaveBeenCalledWith(
       '[matomo] product view dropped: the page view repeats the last tracked URL',
-      expect.objectContaining({ sku: 'SKU-1' }),
+      '_pks=SKU-1',
     );
   });
 
@@ -207,7 +221,7 @@ describe('ecommerce.productView', () => {
 
     expect(parametersPerHit()).toEqual([
       ['trackPageView', {}],
-      ['trackPageView', { _pks: 'SKU-2', _pkn: '', _pkc: '' }],
+      ['trackPageView', { _pks: 'SKU-2' }],
     ]);
   });
 
@@ -224,7 +238,7 @@ describe('ecommerce.productView', () => {
       ['setReferrerUrl', `${PAGE_ORIGIN}/products/1`],
       ['setCustomUrl', `${PAGE_ORIGIN}/products/1`],
       ['setDocumentTitle', 'Router'],
-      ['appendToTrackingUrl', '_pks=SKU-1&_pkn=&_pkc='],
+      ['appendToTrackingUrl', '_pks=SKU-1'],
       ['trackPageView'],
       CLEAR_PARAMETERS,
       ['setReferrerUrl', `${PAGE_ORIGIN}/products/1`],

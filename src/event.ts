@@ -1,4 +1,5 @@
 import type { Logger } from './logger';
+import { cleanText, truncateText } from './text';
 import type { MatomoCommand, TrackedEvent } from './types';
 
 export const MAX_EVENT_NAME_LENGTH = 100;
@@ -37,7 +38,7 @@ function normalizeEventName(rawName: unknown, logger: Logger): string | undefine
 
   const suspicion = describeSuspiciousName(name);
   if (suspicion) logger.warn(`suspicious event name "${name}": ${suspicion}`);
-  return name.slice(0, MAX_EVENT_NAME_LENGTH);
+  return truncateText(name, MAX_EVENT_NAME_LENGTH);
 }
 
 function describeSuspiciousName(name: string): string | null {
@@ -47,10 +48,6 @@ function describeSuspiciousName(name: string): string | null {
   const match = SUSPICIOUS_PATTERNS.find(([pattern]) => pattern.test(name));
   if (match) return match[1];
   return name.split(/\s+/).length > MAX_WORDS_IN_NAME ? 'looks like free text' : null;
-}
-
-export function cleanText(value: unknown): string {
-  return typeof value === 'string' ? value.trim() : '';
 }
 
 export function isFiniteNumber(value: unknown): value is number {

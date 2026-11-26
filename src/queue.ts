@@ -24,20 +24,36 @@ export function isBrowser(): boolean {
   return typeof window !== 'undefined' && typeof document !== 'undefined';
 }
 
+export interface EnqueueOptions {
+  /** The commands may use the reserve above the cap. */
+  useReserve?: boolean;
+  /**
+   * Pushed after `commands` even when matomo.js throws while applying one of them: the commands
+   * that undo state the group set for one hit, such as the parameters appended to it.
+   */
+  cleanup?: MatomoCommand[];
+}
+
 /**
- * Queues the commands together or not at all, and returns whether they were queued.
+ * Queues the commands (and their cleanup) together or not at all, and returns whether they were queued.
  *
  * Commands that belong together must never be split by the cap. A hit dropped between
  * `appendToTrackingUrl new_visit=1` and the `appendToTrackingUrl ''` that clears it would turn
- * every later request into a new visit.
+ * every later request into a new visit. Once matomo.js runs, `_paq.push` applies each command
+ * at once and can throw; the cleanup is pushed anyway, then the error goes on to the caller.
  */
-export function enqueue(commands: MatomoCommand[], options: { useReserve?: boolean } = {}): boolean {
+export function enqueue(commands: MatomoCommand[], options: EnqueueOptions = {}): boolean {
   const target = window as MatomoWindow;
   const queue = target._paq ?? (target._paq = []);
+  const cleanup = options.cleanup ?? [];
   const limit = MAX_QUEUED_COMMANDS + (options.useReserve ? RESERVED_QUEUE_COMMANDS : 0);
-  if (Array.isArray(queue) && queue.length + commands.length > limit) return false;
+  if (Array.isArray(queue) && queue.length + commands.length + cleanup.length > limit) return false;
 
-  commands.forEach((command) => queue.push(command));
+  try {
+    commands.forEach((command) => queue.push(command));
+  } finally {
+    cleanup.forEach((command) => queue.push(command));
+  }
   return true;
 }
 

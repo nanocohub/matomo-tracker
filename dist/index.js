@@ -47,12 +47,30 @@ function resolveErrorCap(value) {
   return isValid ? value : DEFAULT_MAX_ERROR_EVENTS_PER_PAGE;
 }
 
+// src/text.ts
+var SURROGATE_PAIR_OR_LONE_SURROGATE = /([\uD800-\uDBFF][\uDC00-\uDFFF])|[\uD800-\uDFFF]/g;
+var REPLACEMENT_CHARACTER = "\uFFFD";
+var ENDS_WITH_HIGH_SURROGATE = /[\uD800-\uDBFF]$/;
+function toWellFormed(text) {
+  return text.replace(SURROGATE_PAIR_OR_LONE_SURROGATE, (_match, pair) => {
+    return pair || REPLACEMENT_CHARACTER;
+  });
+}
+function cleanText(value) {
+  return typeof value === "string" ? toWellFormed(value.trim()) : "";
+}
+function truncateText(text, maxLength) {
+  if (text.length <= maxLength) return text;
+  const cut = text.slice(0, maxLength);
+  return ENDS_WITH_HIGH_SURROGATE.test(cut) ? cut.slice(0, -1) : cut;
+}
+
 // src/dimensions.ts
 var MAX_DIMENSION_LENGTH = 255;
 function normalizeDimensionValue(value) {
   if (value === null || value === void 0) return null;
-  const text = String(value).trim();
-  return text.length > 0 ? text.slice(0, MAX_DIMENSION_LENGTH) : null;
+  const text = cleanText(String(value));
+  return text.length > 0 ? truncateText(text, MAX_DIMENSION_LENGTH) : null;
 }
 function toDimensionEntries(dimensions) {
   return Object.keys(dimensions != null ? dimensions : {}).map(Number).filter((id) => Number.isInteger(id) && id > 0).sort((left, right) => left - right).map((id) => [id, normalizeDimensionValue(dimensions[id])]);
@@ -89,7 +107,7 @@ function normalizeEventName(rawName, logger) {
   if (!name) return void 0;
   const suspicion = describeSuspiciousName(name);
   if (suspicion) logger.warn(`suspicious event name "${name}": ${suspicion}`);
-  return name.slice(0, MAX_EVENT_NAME_LENGTH);
+  return truncateText(name, MAX_EVENT_NAME_LENGTH);
 }
 function describeSuspiciousName(name) {
   if (name.length > MAX_EVENT_NAME_LENGTH) {
@@ -98,9 +116,6 @@ function describeSuspiciousName(name) {
   const match = SUSPICIOUS_PATTERNS.find(([pattern]) => pattern.test(name));
   if (match) return match[1];
   return name.split(/\s+/).length > MAX_WORDS_IN_NAME ? "looks like free text" : null;
-}
-function cleanText(value) {
-  return typeof value === "string" ? value.trim() : "";
 }
 function isFiniteNumber(value) {
   return typeof value === "number" && Number.isFinite(value);
@@ -120,11 +135,9 @@ function normalizeProduct(product) {
 }
 function productViewParameters(view) {
   const category = Array.isArray(view.category) ? JSON.stringify(view.category) : view.category;
-  const parameters = [
-    ["_pks", view.sku],
-    ["_pkn", view.name],
-    ["_pkc", category]
-  ];
+  const parameters = [["_pks", view.sku]];
+  if (view.name) parameters.push(["_pkn", view.name]);
+  if (category) parameters.push(["_pkc", category]);
   if (view.price !== "") parameters.push(["_pkp", view.price]);
   return parameters.map(([name, value]) => `${name}=${encodeURIComponent(value)}`).join("&");
 }
@@ -222,7 +235,8 @@ function normalizePathname(pathname, normalize) {
   try {
     const normalized = normalize(pathname);
     if (typeof normalized === "string" && normalized.length > 0) {
-      return normalized.startsWith("/") ? normalized : `/${normalized}`;
+      const path = toWellFormed(normalized);
+      return path.startsWith("/") ? path : `/${path}`;
     }
   } catch (e) {
   }
@@ -250,12 +264,17 @@ function isBrowser() {
   return typeof window !== "undefined" && typeof document !== "undefined";
 }
 function enqueue(commands, options = {}) {
-  var _a;
+  var _a, _b;
   const target = window;
   const queue = (_a = target._paq) != null ? _a : target._paq = [];
+  const cleanup = (_b = options.cleanup) != null ? _b : [];
   const limit = MAX_QUEUED_COMMANDS + (options.useReserve ? RESERVED_QUEUE_COMMANDS : 0);
-  if (Array.isArray(queue) && queue.length + commands.length > limit) return false;
-  commands.forEach((command) => queue.push(command));
+  if (Array.isArray(queue) && queue.length + commands.length + cleanup.length > limit) return false;
+  try {
+    commands.forEach((command) => queue.push(command));
+  } finally {
+    cleanup.forEach((command) => queue.push(command));
+  }
   return true;
 }
 function discardQueuedCommands() {
@@ -283,7 +302,7 @@ function isScriptPresent(src) {
 // src/site-search.ts
 var MAX_SEARCH_KEYWORD_LENGTH = 100;
 function buildSiteSearchCommand(search) {
-  const keyword = cleanText(search == null ? void 0 : search.keyword).slice(0, MAX_SEARCH_KEYWORD_LENGTH);
+  const keyword = truncateText(cleanText(search == null ? void 0 : search.keyword), MAX_SEARCH_KEYWORD_LENGTH);
   if (!keyword) return null;
   const category = cleanText(search.category) || false;
   if (isFiniteNumber(search.resultsCount) && search.resultsCount >= 0) {
@@ -336,11 +355,13 @@ function createMatomoTracker(options) {
   };
   const isActive = () => config.enabled && !state.scriptFailed && isBrowser();
   function sendAll(commands, options2 = {}) {
+    var _a;
+    const group = [...commands, ...(_a = options2.cleanup) != null ? _a : []];
     if (!enqueue(commands, options2)) {
-      logger.warn("queue is full, commands dropped", commands);
+      logger.warn("queue is full, commands dropped", group);
       return false;
     }
-    commands.forEach((command) => logger.command(command));
+    group.forEach((command) => logger.command(command));
     return true;
   }
   const send = (command) => sendAll([command]);
@@ -422,22 +443,19 @@ function createMatomoTracker(options) {
   function setDimensions(dimensions) {
     run(() => void sendAll(toDimensionEntries(dimensions).map(dimensionCommand)));
   }
-  function pageViewCommands(url, title) {
+  function sendPageView(url, title) {
     const commands = [];
     if (state.lastViewUrl !== null) commands.push(["setReferrerUrl", state.lastViewUrl]);
     commands.push(["setCustomUrl", url], ["setDocumentTitle", title]);
     const parameters = oneHitParameters();
-    if (parameters) {
-      commands.push(["appendToTrackingUrl", parameters], ["trackPageView"], ["appendToTrackingUrl", ""]);
-    } else {
-      commands.push(["trackPageView"]);
-    }
-    return commands;
+    if (!parameters) return sendAll([...commands, ["trackPageView"]]);
+    commands.push(["appendToTrackingUrl", parameters], ["trackPageView"]);
+    return sendAll(commands, { cleanup: [["appendToTrackingUrl", ""]] });
   }
   function oneHitParameters() {
     const parameters = [];
     if (state.newVisitPending) parameters.push(NEW_VISIT_PARAMETER);
-    if (state.pendingProduct !== null) parameters.push(productViewParameters(state.pendingProduct));
+    if (state.pendingProduct !== null) parameters.push(state.pendingProduct);
     return parameters.join("&");
   }
   function dropPendingProduct() {
@@ -457,7 +475,7 @@ function createMatomoTracker(options) {
         dropPendingProduct();
         return;
       }
-      if (!sendAll(pageViewCommands(url, (_b = view == null ? void 0 : view.title) != null ? _b : document.title))) return;
+      if (!sendPageView(url, toWellFormed(String((_b = view == null ? void 0 : view.title) != null ? _b : document.title)))) return;
       state.lastViewUrl = url;
       state.errorEventsOnPage = 0;
       state.pendingProduct = null;
@@ -498,7 +516,7 @@ function createMatomoTracker(options) {
           logger.warn("productView ignored: sku is required", product);
           return;
         }
-        state.pendingProduct = view;
+        state.pendingProduct = productViewParameters(view);
       });
     },
     cartUpdate(items, grandTotal) {
@@ -552,7 +570,7 @@ function createMatomoTracker(options) {
   };
 }
 function normalizeUserId(value) {
-  return typeof value === "string" || typeof value === "number" ? String(value).trim() : "";
+  return typeof value === "string" || typeof value === "number" ? cleanText(String(value)) : "";
 }
 
 export { createMatomoTracker };

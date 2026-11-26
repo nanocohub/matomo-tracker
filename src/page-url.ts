@@ -1,3 +1,5 @@
+import { toWellFormed } from './text';
+
 export interface PageUrlRules {
   keepQueryParams: ReadonlySet<string>;
   normalizePath: (path: string) => string;
@@ -44,8 +46,10 @@ function parseUrl(input: string, baseHref?: string): URL | null {
 function normalizePathname(pathname: string, normalize: (path: string) => string): string {
   try {
     const normalized = normalize(pathname);
+    // The parsed pathname is percent-encoded, but the app's normalizer may return any text.
     if (typeof normalized === 'string' && normalized.length > 0) {
-      return normalized.startsWith('/') ? normalized : `/${normalized}`;
+      const path = toWellFormed(normalized);
+      return path.startsWith('/') ? path : `/${path}`;
     }
   } catch {
     // A faulty normalizer must not stop the page view: fall back to the raw path.

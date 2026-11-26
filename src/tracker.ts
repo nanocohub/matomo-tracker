@@ -9,15 +9,16 @@ import {
   orderCommand,
   productViewParameters,
 } from './ecommerce';
-import type { ProductView } from './ecommerce';
-import { buildEventCommand, cleanText, isFiniteNumber } from './event';
+import { buildEventCommand, isFiniteNumber } from './event';
 import { buildInitCommands } from './init-commands';
 import { createLogger } from './logger';
 import { buildPageUrl, buildSameOriginReferrerUrl } from './page-url';
 import { discardQueuedCommands, enqueue, isBrowser } from './queue';
+import type { EnqueueOptions } from './queue';
 import { injectMatomoScript } from './script';
 import { buildSiteSearchCommand } from './site-search';
 import { createTabMemory } from './tab-memory';
+import { cleanText, toWellFormed } from './text';
 import type {
   MatomoCommand,
   MatomoEcommerce,
@@ -43,7 +44,8 @@ interface TrackerState {
   scriptFailed: boolean;
   lastViewUrl: string | null;
   newVisitPending: boolean;
-  pendingProduct: ProductView | null;
+  /** The product view waiting for the next page view, as that hit's URL-encoded parameters. */
+  pendingProduct: string | null;
   identity: Identity | null;
   errorEventsOnPage: number;
   trackedOrderIds: Set<string>;
@@ -78,12 +80,13 @@ export function createMatomoTracker(options: MatomoTrackerOptions): MatomoTracke
   const isActive = (): boolean => config.enabled && !state.scriptFailed && isBrowser();
 
   /** Returns whether the commands were queued, all of them or none. */
-  function sendAll(commands: MatomoCommand[], options: { useReserve?: boolean } = {}): boolean {
+  function sendAll(commands: MatomoCommand[], options: EnqueueOptions = {}): boolean {
+    const group = [...commands, ...(options.cleanup ?? [])];
     if (!enqueue(commands, options)) {
-      logger.warn('queue is full, commands dropped', commands);
+      logger.warn('queue is full, commands dropped', group);
       return false;
     }
-    commands.forEach((command) => logger.command(command));
+    group.forEach((command) => logger.command(command));
     return true;
   }
 
@@ -186,26 +189,25 @@ export function createMatomoTracker(options: MatomoTrackerOptions): MatomoTracke
     run(() => void sendAll(toDimensionEntries(dimensions).map(dimensionCommand)));
   }
 
-  function pageViewCommands(url: string, title: string): MatomoCommand[] {
+  /** Queues the page view, and returns whether it was queued. */
+  function sendPageView(url: string, title: string): boolean {
     const commands: MatomoCommand[] = [];
     if (state.lastViewUrl !== null) commands.push(['setReferrerUrl', state.lastViewUrl]);
     commands.push(['setCustomUrl', url], ['setDocumentTitle', title]);
 
-    // matomo.js adds appended parameters to every request after them, so they are set for this one hit and cleared.
+    // matomo.js adds appended parameters to every request after them, so they are set for this one hit and
+    // cleared right after it, even if matomo.js throws while applying the hit.
     const parameters = oneHitParameters();
-    if (parameters) {
-      commands.push(['appendToTrackingUrl', parameters], ['trackPageView'], ['appendToTrackingUrl', '']);
-    } else {
-      commands.push(['trackPageView']);
-    }
-    return commands;
+    if (!parameters) return sendAll([...commands, ['trackPageView']]);
+    commands.push(['appendToTrackingUrl', parameters], ['trackPageView']);
+    return sendAll(commands, { cleanup: [['appendToTrackingUrl', '']] });
   }
 
   /** The pending new visit flag and product view, as parameters of the next page view only. */
   function oneHitParameters(): string {
     const parameters: string[] = [];
     if (state.newVisitPending) parameters.push(NEW_VISIT_PARAMETER);
-    if (state.pendingProduct !== null) parameters.push(productViewParameters(state.pendingProduct));
+    if (state.pendingProduct !== null) parameters.push(state.pendingProduct);
     return parameters.join('&');
   }
 
@@ -227,7 +229,7 @@ export function createMatomoTracker(options: MatomoTrackerOptions): MatomoTracke
         dropPendingProduct(); // kept pending, it would ride on the next page instead
         return;
       }
-      if (!sendAll(pageViewCommands(url, view?.title ?? document.title))) return;
+      if (!sendPageView(url, toWellFormed(String(view?.title ?? document.title)))) return;
 
       state.lastViewUrl = url;
       state.errorEventsOnPage = 0;
@@ -275,7 +277,8 @@ export function createMatomoTracker(options: MatomoTrackerOptions): MatomoTracke
           logger.warn('productView ignored: sku is required', product);
           return;
         }
-        state.pendingProduct = view;
+        // Built now, so a product that cannot be sent never becomes pending.
+        state.pendingProduct = productViewParameters(view);
       });
     },
 
@@ -334,5 +337,5 @@ export function createMatomoTracker(options: MatomoTrackerOptions): MatomoTracke
 }
 
 function normalizeUserId(value: unknown): string {
-  return typeof value === 'string' || typeof value === 'number' ? String(value).trim() : '';
+  return typeof value === 'string' || typeof value === 'number' ? cleanText(String(value)) : '';
 }

@@ -1,4 +1,5 @@
-import { cleanText, isFiniteNumber } from './event';
+import { isFiniteNumber } from './event';
+import { cleanText } from './text';
 import type {
   EcommerceCategory,
   EcommerceItem,
@@ -40,16 +41,16 @@ export function normalizeProduct(product: EcommerceProduct): ProductView | null 
  * that for the rest of the page load and adds it to every later request, and the only way to reset it
  * leaves an empty `_pkc`, which Matomo still records as a product view of category "Value not defined".
  *
- * Matomo reads an array category as several only from a JSON array string; anything else is one category.
- * (Cart items are different: they are serialized as a whole, so a nested array survives.)
+ * An absent name or category is left out rather than sent empty: Matomo stores an empty one as
+ * "Value not defined". Matomo reads an array category as several only from a JSON array string;
+ * anything else is one category. (Cart items are different: they are serialized as a whole, so a
+ * nested array survives.) The values are well formed (`cleanText`), so encoding them cannot throw.
  */
 export function productViewParameters(view: ProductView): string {
   const category = Array.isArray(view.category) ? JSON.stringify(view.category) : view.category;
-  const parameters: Array<[string, string | number]> = [
-    ['_pks', view.sku],
-    ['_pkn', view.name],
-    ['_pkc', category],
-  ];
+  const parameters: Array<[string, string | number]> = [['_pks', view.sku]];
+  if (view.name) parameters.push(['_pkn', view.name]);
+  if (category) parameters.push(['_pkc', category]);
   if (view.price !== '') parameters.push(['_pkp', view.price]);
   return parameters.map(([name, value]) => `${name}=${encodeURIComponent(value)}`).join('&');
 }

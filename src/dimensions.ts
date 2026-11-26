@@ -1,3 +1,4 @@
+import { cleanText, truncateText } from './text';
 import type { DimensionMap, DimensionValue } from './types';
 
 /** Matomo stores custom dimension values up to 255 characters. */
@@ -8,8 +9,8 @@ export type DimensionEntry = readonly [id: number, value: string | null];
 
 export function normalizeDimensionValue(value: DimensionValue): string | null {
   if (value === null || value === undefined) return null;
-  const text = String(value).trim();
-  return text.length > 0 ? text.slice(0, MAX_DIMENSION_LENGTH) : null;
+  const text = cleanText(String(value));
+  return text.length > 0 ? truncateText(text, MAX_DIMENSION_LENGTH) : null;
 }
 
 /** Valid entries of a dimension map, in ascending id order. Invalid ids are skipped. */

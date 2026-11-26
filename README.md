@@ -161,14 +161,15 @@ only, so call it before the view. For a product page whose data loads late, hold
 to the page that was already tracked (a product component that remounts on the same page, say), and kept pending
 it would ride on the next page, the cart for example. Pass `force: true` to send the page again with the product.
 
-The product goes out as parameters of that one request (`_pks` sku, `_pkn` name, `_pkc` category, `_pkp` price
-when there is one, each URL-encoded), through the same `appendToTrackingUrl` set-and-clear as the new visit flag,
-and **not** through matomo.js's `setEcommerceView`. matomo.js keeps a `setEcommerceView` for the whole page load and
-adds it to **every** later request, page views and events alike, and Matomo records each of those as a view of that
-product: in a single-page app the cart, the checkout and every event after a product page would count as views of
-it. matomo.js has no way to unset it: `setEcommerceView` without arguments still leaves an empty `_pkc` on every
-later request, and Matomo stores that as a product view of category "Value not defined". So do not
-`push(['setEcommerceView', ...])` yourself.
+The product goes out as parameters of that one request (`_pks` sku, then `_pkn` name, `_pkc` category and `_pkp`
+price only when the product has them, each URL-encoded), through the same `appendToTrackingUrl` set-and-clear as the
+new visit flag, and **not** through matomo.js's `setEcommerceView`. An absent name or category is left out rather
+than sent empty, because Matomo stores an empty one as "Value not defined". matomo.js keeps a `setEcommerceView` for
+the whole page load and adds it to **every** later request, page views and events alike, and Matomo records each of
+those as a view of that product: in a single-page app the cart, the checkout and every event after a product page
+would count as views of it. matomo.js has no way to unset it: `setEcommerceView` without arguments still leaves an
+empty `_pkc` on every later request, and Matomo stores that as a product view of category "Value not defined". So do
+not `push(['setEcommerceView', ...])` yourself.
 
 **`ecommerce.cartUpdate(items, grandTotal)`** replaces the cart and sends the update.
 **`ecommerce.order(order)`** sends the order; the same `orderId` twice in one page session is ignored (Matomo
@@ -367,13 +368,19 @@ For a plain `<script>` page with no modules, load `dist/browser.global.js` from 
   that needs several commands (a page view with a new visit or a product view, `identify`, `setDimensions`, a cart
   or an order) is queued whole or not at all, and the tracker changes its own state only after those commands were
   queued. A full queue therefore never leaves the new visit or product view parameters set without the command
-  that clears them, and a dropped page view (with its product view), `identify` or order is tried again instead of being
-  remembered as done.
+  that clears them, and a dropped page view (with its product view), `identify` or order is tried again instead of
+  being remembered as done. Once matomo.js runs, it applies each command as it is pushed and can throw; the clear
+  of a page view's parameters is pushed even then, and the view stays pending for the next try.
 - `reset()` is the one exception: its commands (the user id, the dimensions and the referrer being cleared) use a
   reserve of 100 commands above the cap, so they always reach matomo.js before the next hit. Without them that hit
   would go out as a new visit still carrying the previous user's id and dimensions. If even the reserve is full
   (about 300 `reset()` calls while matomo.js has still not loaded), tracking is turned off (`enabled` becomes
   `false`) rather than misattribute what follows.
+- Hands matomo.js only well-formed text. A lone UTF-16 surrogate (half of an emoji, left by a string cut in the
+  middle) makes `encodeURIComponent` throw, in matomo.js as in the tracker, which would lose the hit. Each one in a
+  page title, an event, a site search, a dimension, a user id, an order or a product is replaced with U+FFFD, and the
+  tracker's own truncation (event names, keywords, dimension values) never cuts an emoji in two. `push()` passes its
+  command through untouched.
 - Keeps working from memory when `sessionStorage` is blocked.
 
 ## Debugging

@@ -88,7 +88,7 @@ describe('the new visit group at the queue cap', () => {
 });
 
 describe('the product view group at the queue cap', () => {
-  const PRODUCT_PARAMETERS = '_pks=SKU-1&_pkn=&_pkc=';
+  const PRODUCT_PARAMETERS = '_pks=SKU-1';
   const CLEAR_PARAMETERS = ['appendToTrackingUrl', ''];
 
   function trackerWithPendingProduct() {
@@ -188,7 +188,7 @@ describe('page views at the queue cap', () => {
 
     tracker.trackPageView({ url: '/products/1' });
 
-    expect(count('appendToTrackingUrl', '_pks=SKU-1&_pkn=&_pkc=')).toBe(1);
+    expect(count('appendToTrackingUrl', '_pks=SKU-1')).toBe(1);
   });
 
   it('does not reset the error counter for a dropped view', () => {
