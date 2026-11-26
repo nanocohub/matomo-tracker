@@ -134,8 +134,9 @@ leaves them alone.
 **`trackPageView({ url?, title?, force? })`**. The URL defaults to `window.location.href` and may be a path.
 It is reduced to `origin + normalizePath(pathname) + kept query params`. The commands go out in this order:
 `setReferrerUrl` (the previous tracked URL; none for the first view of a page load, see below), `setCustomUrl`,
-`setDocumentTitle`, the pending ecommerce product view, the new-visit flag, `trackPageView`, then the new-visit
-flag and the product view cleared again. A view whose final URL equals the last one is skipped unless `force`, and
+`setDocumentTitle`, then, when a new visit or a product view is pending, `appendToTrackingUrl` with their
+parameters (`new_visit=1`, `_pks`, `_pkn`, `_pkc`, `_pkp`), `trackPageView` and `appendToTrackingUrl('')` to clear
+them again; otherwise just `trackPageView`. A view whose final URL equals the last one is skipped unless `force`, and
 drops a pending product view (see `productView`). Each tracked view resets the `trackError` counter.
 
 The referrer of the **first view of a page load** is `document.referrer`. When it is a page of the **same origin**
@@ -160,12 +161,14 @@ only, so call it before the view. For a product page whose data loads late, hold
 to the page that was already tracked (a product component that remounts on the same page, say), and kept pending
 it would ride on the next page, the cart for example. Pass `force: true` to send the page again with the product.
 
-Why the product view is cleared right after its page view: matomo.js keeps the last `setEcommerceView` for the
-whole page load and adds it (`_pks`, `_pkn`, `_pkc`, `_pkp`) to **every** later request, page views and events
-alike, and Matomo records each of those as a view of that product. In a single-page app the cart, the checkout and
-every event after a product page would count as views of it. So the page view's commands end with
-`setEcommerceView` without arguments: later requests then carry only an empty `_pkc`, which Matomo ignores. A
-`setEcommerceView` sent through `push()` is not cleared and sticks the same way.
+The product goes out as parameters of that one request (`_pks` sku, `_pkn` name, `_pkc` category, `_pkp` price
+when there is one, each URL-encoded), through the same `appendToTrackingUrl` set-and-clear as the new visit flag,
+and **not** through matomo.js's `setEcommerceView`. matomo.js keeps a `setEcommerceView` for the whole page load and
+adds it to **every** later request, page views and events alike, and Matomo records each of those as a view of that
+product: in a single-page app the cart, the checkout and every event after a product page would count as views of
+it. matomo.js has no way to unset it: `setEcommerceView` without arguments still leaves an empty `_pkc` on every
+later request, and Matomo stores that as a product view of category "Value not defined". So do not
+`push(['setEcommerceView', ...])` yourself.
 
 **`ecommerce.cartUpdate(items, grandTotal)`** replaces the cart and sends the update.
 **`ecommerce.order(order)`** sends the order; the same `orderId` twice in one page session is ignored (Matomo
@@ -175,7 +178,9 @@ also dedupes by order id on the server). Items default to price 0 and quantity 1
 methods matomo.js knows (`trackGoal`, `rememberCookieConsentGiven`, ...): an unknown method name (a typo) makes
 matomo.js throw a `TypeError` while it replays the queue, and every command queued **after** it is lost, the
 tracker's own page views included. After matomo.js has loaded the error is swallowed, as everything the tracker
-does, and shows up only with `debug: true`.
+does, and shows up only with `debug: true`. Use `ecommerce.productView` rather than pushing `setEcommerceView`,
+which sticks to every later request (see above), and leave `appendToTrackingUrl` to the tracker: it sets and clears
+it around page views.
 
 ### `useMatomoPageView(tracker, { path, title?, ready? })`
 
@@ -355,13 +360,14 @@ For a plain `<script>` page with no modules, load `dist/browser.global.js` from 
   and chains referrers across single-page navigations.
 - Starts a new visit through `appendToTrackingUrl('new_visit=1')` around **one** page view only, so a heartbeat
   or an event sent in between cannot open a phantom visit.
-- Sends an ecommerce product view with **one** page view only, and clears it right after that hit: matomo.js
-  would otherwise add it to every later request of the page load (see `productView`).
+- Sends an ecommerce product view with **one** page view only, as parameters appended around that hit the same
+  way, instead of matomo.js's `setEcommerceView`, which would stick to every later request of the page load and
+  cannot be fully unset (see `productView`).
 - Bounds the pre-load queue at 500 commands, and turns tracking off when matomo.js fails to load. An operation
   that needs several commands (a page view with a new visit or a product view, `identify`, `setDimensions`, a cart
   or an order) is queued whole or not at all, and the tracker changes its own state only after those commands were
-  queued. A full queue therefore never leaves a new visit flag or a product view set without the command that
-  clears it, and a dropped page view (with its product view), `identify` or order is tried again instead of being
+  queued. A full queue therefore never leaves the new visit or product view parameters set without the command
+  that clears them, and a dropped page view (with its product view), `identify` or order is tried again instead of being
   remembered as done.
 - `reset()` is the one exception: its commands (the user id, the dimensions and the referrer being cleared) use a
   reserve of 100 commands above the cap, so they always reach matomo.js before the next hit. Without them that hit
@@ -372,9 +378,10 @@ For a plain `<script>` page with no modules, load `dist/browser.global.js` from 
 
 ## Debugging
 
-`createMatomoTracker({ ..., debug: true })` prints each `_paq` command and warns about suspicious event names.
-In the browser, `_paq` is on `window`; the network tab shows the `matomo.php` requests (`new_visit=1` appears on
-the first request after a logout).
+`createMatomoTracker({ ..., debug: true })` prints each `_paq` command, warns about suspicious event names, and
+warns when a page view skipped as a repeat drops a pending product view. In the browser, `_paq` is on `window`; the
+network tab shows the `matomo.php` requests (`new_visit=1` appears on the first request after a logout, and
+`_pks`/`_pkn`/`_pkc` on the product page view only).
 
 ## Development
 

@@ -35,22 +35,23 @@ export function normalizeProduct(product: EcommerceProduct): ProductView | null 
 }
 
 /**
- * matomo.js joins an array category with commas for `setEcommerceView`, and Matomo would then
- * report one category named "Network,Cables". A JSON array string is read as several.
+ * The product view as the tracking request parameters matomo.js's `setEcommerceView` would add, URL-encoded.
+ * The tracker sends them with one page view only, instead of calling `setEcommerceView`: matomo.js keeps
+ * that for the rest of the page load and adds it to every later request, and the only way to reset it
+ * leaves an empty `_pkc`, which Matomo still records as a product view of category "Value not defined".
+ *
+ * Matomo reads an array category as several only from a JSON array string; anything else is one category.
  * (Cart items are different: they are serialized as a whole, so a nested array survives.)
  */
-export function productViewCommand(view: ProductView): MatomoCommand {
+export function productViewParameters(view: ProductView): string {
   const category = Array.isArray(view.category) ? JSON.stringify(view.category) : view.category;
-  return ['setEcommerceView', view.sku, view.name, category, view.price];
-}
-
-/**
- * matomo.js keeps the last product view for the rest of the page load and sends it with every later
- * request, page views and events alike, and Matomo records each of them as a view of that product.
- * Called without arguments it keeps only an empty category, which Matomo ignores.
- */
-export function clearProductViewCommand(): MatomoCommand {
-  return ['setEcommerceView'];
+  const parameters: Array<[string, string | number]> = [
+    ['_pks', view.sku],
+    ['_pkn', view.name],
+    ['_pkc', category],
+  ];
+  if (view.price !== '') parameters.push(['_pkp', view.price]);
+  return parameters.map(([name, value]) => `${name}=${encodeURIComponent(value)}`).join('&');
 }
 
 export function clearCartCommand(): MatomoCommand {

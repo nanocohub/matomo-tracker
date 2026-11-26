@@ -1,5 +1,5 @@
-import { M as MatomoTrackerOptions, a as MatomoTracker } from './types-fmxTegxE.js';
-export { D as DimensionMap, b as DimensionValue, E as EcommerceCategory, c as EcommerceItem, d as EcommerceOrder, e as EcommerceProduct, f as MatomoCommand, g as MatomoEcommerce, P as PageView, S as SiteSearch, T as TrackedEvent, U as UserIdentity } from './types-fmxTegxE.js';
+import { M as MatomoTrackerOptions, a as MatomoTracker } from './types-C9uOkf6-.js';
+export { D as DimensionMap, b as DimensionValue, E as EcommerceCategory, c as EcommerceItem, d as EcommerceOrder, e as EcommerceProduct, f as MatomoCommand, g as MatomoEcommerce, P as PageView, S as SiteSearch, T as TrackedEvent, U as UserIdentity } from './types-C9uOkf6-.js';
 
 /**
  * Creates a tracker. Nothing happens until it is first used: no script, no `_paq` writes.

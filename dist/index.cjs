@@ -120,12 +120,15 @@ function normalizeProduct(product) {
     price: isFiniteNumber(product.price) ? product.price : ""
   };
 }
-function productViewCommand(view) {
+function productViewParameters(view) {
   const category = Array.isArray(view.category) ? JSON.stringify(view.category) : view.category;
-  return ["setEcommerceView", view.sku, view.name, category, view.price];
-}
-function clearProductViewCommand() {
-  return ["setEcommerceView"];
+  const parameters = [
+    ["_pks", view.sku],
+    ["_pkn", view.name],
+    ["_pkc", category]
+  ];
+  if (view.price !== "") parameters.push(["_pkp", view.price]);
+  return parameters.map(([name, value]) => `${name}=${encodeURIComponent(value)}`).join("&");
 }
 function clearCartCommand() {
   return ["clearEcommerceCart"];
@@ -425,14 +428,24 @@ function createMatomoTracker(options) {
     const commands = [];
     if (state.lastViewUrl !== null) commands.push(["setReferrerUrl", state.lastViewUrl]);
     commands.push(["setCustomUrl", url], ["setDocumentTitle", title]);
-    if (state.pendingProduct !== null) commands.push(productViewCommand(state.pendingProduct));
-    if (state.newVisitPending) {
-      commands.push(["appendToTrackingUrl", NEW_VISIT_PARAMETER], ["trackPageView"], ["appendToTrackingUrl", ""]);
+    const parameters = oneHitParameters();
+    if (parameters) {
+      commands.push(["appendToTrackingUrl", parameters], ["trackPageView"], ["appendToTrackingUrl", ""]);
     } else {
       commands.push(["trackPageView"]);
     }
-    if (state.pendingProduct !== null) commands.push(clearProductViewCommand());
     return commands;
+  }
+  function oneHitParameters() {
+    const parameters = [];
+    if (state.newVisitPending) parameters.push(NEW_VISIT_PARAMETER);
+    if (state.pendingProduct !== null) parameters.push(productViewParameters(state.pendingProduct));
+    return parameters.join("&");
+  }
+  function dropPendingProduct() {
+    if (state.pendingProduct === null) return;
+    logger.warn("product view dropped: the page view repeats the last tracked URL", state.pendingProduct);
+    state.pendingProduct = null;
   }
   function trackPageView(view) {
     run(() => {
@@ -443,7 +456,7 @@ function createMatomoTracker(options) {
         return;
       }
       if ((view == null ? void 0 : view.force) !== true && url === state.lastViewUrl) {
-        state.pendingProduct = null;
+        dropPendingProduct();
         return;
       }
       if (!sendAll(pageViewCommands(url, (_b = view == null ? void 0 : view.title) != null ? _b : document.title))) return;

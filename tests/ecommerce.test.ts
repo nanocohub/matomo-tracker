@@ -1,11 +1,24 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { PAGE_ORIGIN, commandsAfterInit, createTracker } from './helpers';
 
-const CLEAR_PRODUCT_VIEW = ['setEcommerceView'];
+const CLEAR_PARAMETERS = ['appendToTrackingUrl', ''];
 
-/** The `setEcommerceView` commands that set a product, leaving out the ones that clear it. */
-function productViewsQueued(): unknown[][] {
-  return commandsAfterInit().filter((command) => command[0] === 'setEcommerceView' && command.length > 1);
+/** The parameters each hit goes out with: matomo.js adds the last `appendToTrackingUrl` to every request after it. */
+function parametersPerHit(): Array<[string, Record<string, string>]> {
+  const hits: Array<[string, Record<string, string>]> = [];
+  let appended = '';
+  for (const [name, value] of commandsAfterInit()) {
+    if (name === 'appendToTrackingUrl') appended = String(value);
+    if (name === 'trackPageView' || name === 'trackEvent') {
+      hits.push([name, Object.fromEntries(new URLSearchParams(appended))]);
+    }
+  }
+  return hits;
+}
+
+/** The parameters of the product page view, decoded. */
+function productParameters(): Record<string, string> {
+  return parametersPerHit()[0]?.[1] ?? {};
 }
 
 describe('ecommerce.productView', () => {
@@ -15,7 +28,7 @@ describe('ecommerce.productView', () => {
     expect(commandsAfterInit()).toEqual([]);
   });
 
-  it('is applied to the next page view, after the title and before the hit, and cleared right after the hit', () => {
+  it('is appended to the next page view as its parameters, and cleared right after the hit', () => {
     const tracker = createTracker();
     tracker.ecommerce.productView({ sku: 'SKU-1', name: 'Router', category: 'Network', price: 99 });
 
@@ -24,13 +37,13 @@ describe('ecommerce.productView', () => {
     expect(commandsAfterInit()).toEqual([
       ['setCustomUrl', `${PAGE_ORIGIN}/products/1`],
       ['setDocumentTitle', 'Router'],
-      ['setEcommerceView', 'SKU-1', 'Router', 'Network', 99],
+      ['appendToTrackingUrl', '_pks=SKU-1&_pkn=Router&_pkc=Network&_pkp=99'],
       ['trackPageView'],
-      CLEAR_PRODUCT_VIEW,
+      CLEAR_PARAMETERS,
     ]);
   });
 
-  it('is cleared after the new visit flag, in the same group, when the view also starts a new visit', () => {
+  it('shares the appended parameters with a new visit, in the same group', () => {
     const tracker = createTracker();
     tracker.reset();
     tracker.ecommerce.productView({ sku: 'SKU-1' });
@@ -41,37 +54,51 @@ describe('ecommerce.productView', () => {
     expect(commandsAfterInit().slice(queuedBefore)).toEqual([
       ['setCustomUrl', `${PAGE_ORIGIN}/products/1`],
       ['setDocumentTitle', 'Router'],
-      ['setEcommerceView', 'SKU-1', '', '', ''],
-      ['appendToTrackingUrl', 'new_visit=1'],
+      ['appendToTrackingUrl', 'new_visit=1&_pks=SKU-1&_pkn=&_pkc='],
       ['trackPageView'],
-      ['appendToTrackingUrl', ''],
-      CLEAR_PRODUCT_VIEW,
+      CLEAR_PARAMETERS,
     ]);
   });
 
-  it('is applied once, not to the page views after that', () => {
+  it('goes out with the product page view only: the page views and events after it carry no product parameter', () => {
+    const tracker = createTracker();
+    tracker.ecommerce.productView({ sku: 'SKU-1', name: 'Router' });
+
+    tracker.trackPageView({ url: '/products/1' });
+    tracker.trackEvent({ category: 'Cart', action: 'Add' });
+    tracker.trackPageView({ url: '/cart' });
+    tracker.trackEvent({ category: 'Cart', action: 'Update' });
+
+    expect(parametersPerHit()).toEqual([
+      ['trackPageView', { _pks: 'SKU-1', _pkn: 'Router', _pkc: '' }],
+      ['trackEvent', {}],
+      ['trackPageView', {}],
+      ['trackEvent', {}],
+    ]);
+  });
+
+  it("never uses setEcommerceView, which matomo.js would keep for the page load's every later request", () => {
     const tracker = createTracker();
     tracker.ecommerce.productView({ sku: 'SKU-1' });
 
     tracker.trackPageView({ url: '/products/1' });
-    tracker.trackPageView({ url: '/cart' });
-
-    expect(productViewsQueued()).toHaveLength(1);
-  });
-
-  it('queues no clear for a page view without a product', () => {
-    createTracker().trackPageView({ url: '/cart' });
 
     expect(commandsAfterInit().some(([name]) => name === 'setEcommerceView')).toBe(false);
   });
 
-  it('uses empty values for what is absent', () => {
+  it('queues no appended parameters for a page view without a product or a new visit', () => {
+    createTracker().trackPageView({ url: '/cart' });
+
+    expect(commandsAfterInit().some(([name]) => name === 'appendToTrackingUrl')).toBe(false);
+  });
+
+  it('uses empty values for an absent name and category, and leaves an absent price out', () => {
     const tracker = createTracker();
     tracker.ecommerce.productView({ sku: 'SKU-1' });
 
     tracker.trackPageView({ url: '/products/1' });
 
-    expect(commandsAfterInit()[2]).toEqual(['setEcommerceView', 'SKU-1', '', '', '']);
+    expect(commandsAfterInit()[2]).toEqual(['appendToTrackingUrl', '_pks=SKU-1&_pkn=&_pkc=']);
   });
 
   it('keeps a price of zero', () => {
@@ -80,16 +107,16 @@ describe('ecommerce.productView', () => {
 
     tracker.trackPageView({ url: '/products/1' });
 
-    expect(commandsAfterInit()[2]).toEqual(['setEcommerceView', 'SKU-1', '', '', 0]);
+    expect(productParameters()._pkp).toBe('0');
   });
 
-  it('passes up to five categories as a JSON array string, which matomo.js would otherwise comma-join', () => {
+  it('passes up to five categories as a JSON array string, which Matomo reads as several', () => {
     const tracker = createTracker();
     tracker.ecommerce.productView({ sku: 'SKU-1', category: ['a', ' b ', '', 'c', 'd', 'e', 'f'] });
 
     tracker.trackPageView({ url: '/products/1' });
 
-    expect(commandsAfterInit()[2]).toEqual(['setEcommerceView', 'SKU-1', '', '["a","b","c","d","e"]', '']);
+    expect(productParameters()._pkc).toBe('["a","b","c","d","e"]');
   });
 
   it('passes a single category as a plain string', () => {
@@ -98,7 +125,26 @@ describe('ecommerce.productView', () => {
 
     tracker.trackPageView({ url: '/products/1' });
 
-    expect(commandsAfterInit()[2]).toEqual(['setEcommerceView', 'SKU-1', '', 'Network', '']);
+    expect(productParameters()._pkc).toBe('Network');
+  });
+
+  it('URL-encodes every value, so &, = and Vietnamese text cannot add, break or garble a parameter', () => {
+    const tracker = createTracker();
+    tracker.ecommerce.productView({
+      sku: 'A&B=1',
+      name: 'Quạt điện & đèn = 50%+',
+      category: ['Điện gia dụng', 'Quạt/Fan?'],
+      price: 1.5,
+    });
+
+    tracker.trackPageView({ url: '/products/1' });
+
+    expect(productParameters()).toEqual({
+      _pks: 'A&B=1',
+      _pkn: 'Quạt điện & đèn = 50%+',
+      _pkc: '["Điện gia dụng","Quạt/Fan?"]',
+      _pkp: '1.5',
+    });
   });
 
   it('is dropped by a view skipped as a repeat, so a remounted product page does not leak it to the next page', () => {
@@ -115,14 +161,40 @@ describe('ecommerce.productView', () => {
     expect(commandsAfterInit()).toEqual([
       ['setCustomUrl', `${PAGE_ORIGIN}/products/fan`],
       ['setDocumentTitle', 'Fan'],
-      ['setEcommerceView', 'NWF1606', 'Fan', '["Quat"]', 1000],
+      ['appendToTrackingUrl', '_pks=NWF1606&_pkn=Fan&_pkc=%5B%22Quat%22%5D&_pkp=1000'],
       ['trackPageView'],
-      CLEAR_PRODUCT_VIEW,
+      CLEAR_PARAMETERS,
       ['setReferrerUrl', `${PAGE_ORIGIN}/products/fan`],
       ['setCustomUrl', `${PAGE_ORIGIN}/cart`],
       ['setDocumentTitle', 'Cart'],
       ['trackPageView'],
     ]);
+  });
+
+  it('logs, with debug on, the product view a skipped repeat drops', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    vi.spyOn(console, 'info').mockImplementation(() => undefined);
+    const tracker = createTracker({ debug: true });
+    tracker.trackPageView({ url: '/products/1' });
+    tracker.ecommerce.productView({ sku: 'SKU-1' });
+
+    tracker.trackPageView({ url: '/products/1' });
+
+    expect(warn).toHaveBeenCalledWith(
+      '[matomo] product view dropped: the page view repeats the last tracked URL',
+      expect.objectContaining({ sku: 'SKU-1' }),
+    );
+  });
+
+  it('logs nothing for a skipped repeat without a pending product', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    vi.spyOn(console, 'info').mockImplementation(() => undefined);
+    const tracker = createTracker({ debug: true });
+    tracker.trackPageView({ url: '/a' });
+
+    tracker.trackPageView({ url: '/a' });
+
+    expect(warn).not.toHaveBeenCalled();
   });
 
   it('is still applied to the next page view after a repeat was skipped', () => {
@@ -133,7 +205,10 @@ describe('ecommerce.productView', () => {
 
     tracker.trackPageView({ url: '/products/2' });
 
-    expect(productViewsQueued()).toEqual([['setEcommerceView', 'SKU-2', '', '', '']]);
+    expect(parametersPerHit()).toEqual([
+      ['trackPageView', {}],
+      ['trackPageView', { _pks: 'SKU-2', _pkn: '', _pkc: '' }],
+    ]);
   });
 
   it('is applied to a forced repeat of the last page view, and only to it', () => {
@@ -149,9 +224,9 @@ describe('ecommerce.productView', () => {
       ['setReferrerUrl', `${PAGE_ORIGIN}/products/1`],
       ['setCustomUrl', `${PAGE_ORIGIN}/products/1`],
       ['setDocumentTitle', 'Router'],
-      ['setEcommerceView', 'SKU-1', '', '', ''],
+      ['appendToTrackingUrl', '_pks=SKU-1&_pkn=&_pkc='],
       ['trackPageView'],
-      CLEAR_PRODUCT_VIEW,
+      CLEAR_PARAMETERS,
       ['setReferrerUrl', `${PAGE_ORIGIN}/products/1`],
       ['setCustomUrl', `${PAGE_ORIGIN}/cart`],
       ['setDocumentTitle', 'Cart'],
@@ -165,7 +240,7 @@ describe('ecommerce.productView', () => {
 
     tracker.trackPageView({ url: '/products/1' });
 
-    expect(commandsAfterInit().some(([name]) => name === 'setEcommerceView')).toBe(false);
+    expect(commandsAfterInit().some(([name]) => name === 'appendToTrackingUrl')).toBe(false);
   });
 });
 

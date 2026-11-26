@@ -4,11 +4,10 @@ import type { DimensionEntry } from './dimensions';
 import {
   cartUpdateCommand,
   clearCartCommand,
-  clearProductViewCommand,
   itemCommands,
   normalizeProduct,
   orderCommand,
-  productViewCommand,
+  productViewParameters,
 } from './ecommerce';
 import type { ProductView } from './ecommerce';
 import { buildEventCommand, cleanText, isFiniteNumber } from './event';
@@ -191,18 +190,30 @@ export function createMatomoTracker(options: MatomoTrackerOptions): MatomoTracke
     const commands: MatomoCommand[] = [];
     if (state.lastViewUrl !== null) commands.push(['setReferrerUrl', state.lastViewUrl]);
     commands.push(['setCustomUrl', url], ['setDocumentTitle', title]);
-    if (state.pendingProduct !== null) commands.push(productViewCommand(state.pendingProduct));
 
-    // The new visit flag applies to every request after it, so it is set for this one hit and cleared right after.
-    if (state.newVisitPending) {
-      commands.push(['appendToTrackingUrl', NEW_VISIT_PARAMETER], ['trackPageView'], ['appendToTrackingUrl', '']);
+    // matomo.js adds appended parameters to every request after them, so they are set for this one hit and cleared.
+    const parameters = oneHitParameters();
+    if (parameters) {
+      commands.push(['appendToTrackingUrl', parameters], ['trackPageView'], ['appendToTrackingUrl', '']);
     } else {
       commands.push(['trackPageView']);
     }
-
-    // Like the new visit flag, the product view would stick to every later request: it is for this one hit.
-    if (state.pendingProduct !== null) commands.push(clearProductViewCommand());
     return commands;
+  }
+
+  /** The pending new visit flag and product view, as parameters of the next page view only. */
+  function oneHitParameters(): string {
+    const parameters: string[] = [];
+    if (state.newVisitPending) parameters.push(NEW_VISIT_PARAMETER);
+    if (state.pendingProduct !== null) parameters.push(productViewParameters(state.pendingProduct));
+    return parameters.join('&');
+  }
+
+  /** A product viewed again on the page already tracked (a remounted component) belongs to that page. */
+  function dropPendingProduct(): void {
+    if (state.pendingProduct === null) return;
+    logger.warn('product view dropped: the page view repeats the last tracked URL', state.pendingProduct);
+    state.pendingProduct = null;
   }
 
   function trackPageView(view?: PageView): void {
@@ -213,9 +224,7 @@ export function createMatomoTracker(options: MatomoTrackerOptions): MatomoTracke
         return;
       }
       if (view?.force !== true && url === state.lastViewUrl) {
-        // A product viewed again on the page already tracked (a remounted component) belongs to that page:
-        // kept pending, it would ride on the next page instead.
-        state.pendingProduct = null;
+        dropPendingProduct(); // kept pending, it would ride on the next page instead
         return;
       }
       if (!sendAll(pageViewCommands(url, view?.title ?? document.title))) return;

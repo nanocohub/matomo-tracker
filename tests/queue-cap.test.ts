@@ -88,8 +88,8 @@ describe('the new visit group at the queue cap', () => {
 });
 
 describe('the product view group at the queue cap', () => {
-  const PRODUCT_VIEW = ['setEcommerceView', 'SKU-1', '', '', ''];
-  const CLEAR_PRODUCT_VIEW = ['setEcommerceView'];
+  const PRODUCT_PARAMETERS = '_pks=SKU-1&_pkn=&_pkc=';
+  const CLEAR_PARAMETERS = ['appendToTrackingUrl', ''];
 
   function trackerWithPendingProduct() {
     const tracker = createTracker();
@@ -97,13 +97,13 @@ describe('the product view group at the queue cap', () => {
     return tracker;
   }
 
-  /** Every product set must be followed by its clear, or matomo.js would send it with every later request. */
-  function productViewsLeftSet(): number {
-    const clears = queuedCommands().filter((command) => command.length === 1 && command[0] === 'setEcommerceView');
-    return count('setEcommerceView', 'SKU-1') - clears.length;
+  /** Appended parameters never cleared again: matomo.js would add them to every later request. */
+  function appendedParametersLeftSet(): number {
+    const appended = queuedCommands().filter(([name]) => name === 'appendToTrackingUrl');
+    return appended.filter(([, value]) => value !== '').length - appended.filter(([, value]) => value === '').length;
   }
 
-  it('is queued whole, its clear included, when it fits exactly', () => {
+  it('is queued whole, the clear of its parameters included, when it fits exactly', () => {
     const tracker = trackerWithPendingProduct();
     leaveRoom(5);
 
@@ -113,9 +113,9 @@ describe('the product view group at the queue cap', () => {
     expect(queuedCommands().slice(-5)).toEqual([
       ['setCustomUrl', `${PAGE_ORIGIN}/products/1`],
       ['setDocumentTitle', ''],
-      PRODUCT_VIEW,
+      ['appendToTrackingUrl', PRODUCT_PARAMETERS],
       ['trackPageView'],
-      CLEAR_PRODUCT_VIEW,
+      CLEAR_PARAMETERS,
     ]);
   });
 
@@ -130,7 +130,7 @@ describe('the product view group at the queue cap', () => {
   });
 
   it.each([0, 1, 2, 3, 4, 5, 6, 7, 8])(
-    'never leaves a product view set without its clear, also with a new visit, with %i commands of room',
+    'never leaves the product or new visit parameters set without their clear, with %i commands of room',
     (room) => {
       const tracker = trackerWithPendingNewVisit();
       tracker.ecommerce.productView({ sku: 'SKU-1' });
@@ -138,12 +138,12 @@ describe('the product view group at the queue cap', () => {
 
       tracker.trackPageView({ url: '/products/1' });
 
-      expect(productViewsLeftSet()).toBe(0);
-      expect(count('appendToTrackingUrl', 'new_visit=1')).toBe(count('appendToTrackingUrl', ''));
+      expect(appendedParametersLeftSet()).toBe(0);
+      expect(count('appendToTrackingUrl', `new_visit=1&${PRODUCT_PARAMETERS}`)).toBe(count('trackPageView'));
     },
   );
 
-  it('keeps the product pending after a dropped view, then applies and clears it on the next view that fits', () => {
+  it('keeps the product pending after a dropped view, then sends it once with the next view that fits', () => {
     const tracker = trackerWithPendingProduct();
     leaveRoom(4);
     tracker.trackPageView({ url: '/products/1' });
@@ -155,9 +155,9 @@ describe('the product view group at the queue cap', () => {
     expect(queuedCommands().slice(DEFAULT_INIT_COMMANDS.length)).toEqual([
       ['setCustomUrl', `${PAGE_ORIGIN}/products/1`],
       ['setDocumentTitle', ''],
-      PRODUCT_VIEW,
+      ['appendToTrackingUrl', PRODUCT_PARAMETERS],
       ['trackPageView'],
-      CLEAR_PRODUCT_VIEW,
+      CLEAR_PARAMETERS,
       ['setReferrerUrl', `${PAGE_ORIGIN}/products/1`],
       ['setCustomUrl', `${PAGE_ORIGIN}/cart`],
       ['setDocumentTitle', ''],
@@ -188,7 +188,7 @@ describe('page views at the queue cap', () => {
 
     tracker.trackPageView({ url: '/products/1' });
 
-    expect(count('setEcommerceView', 'SKU-1')).toBe(1);
+    expect(count('appendToTrackingUrl', '_pks=SKU-1&_pkn=&_pkc=')).toBe(1);
   });
 
   it('does not reset the error counter for a dropped view', () => {
@@ -298,7 +298,10 @@ function replayHits(commands: unknown[][]): ReplayedHit[] {
     if (name === 'setCustomDimension') dimensions[first as number] = second;
     if (name === 'deleteCustomDimension') delete dimensions[first as number];
     if (name === 'appendToTrackingUrl') appended = first;
-    if (name === 'trackPageView') hits.push({ userId, dimensions: { ...dimensions }, newVisit: appended === 'new_visit=1' });
+    if (name === 'trackPageView') {
+      const newVisit = new URLSearchParams(String(appended)).get('new_visit') === '1';
+      hits.push({ userId, dimensions: { ...dimensions }, newVisit });
+    }
   }
   return hits;
 }
