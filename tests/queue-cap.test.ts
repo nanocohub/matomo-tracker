@@ -2,13 +2,19 @@ import { describe, expect, it } from 'vitest';
 import { DEFAULT_INIT_COMMANDS, PAGE_ORIGIN, createTracker, queuedCommands } from './helpers';
 
 const CAP = 500;
+const RESERVE = 100;
 const NEW_VISIT = ['appendToTrackingUrl', 'new_visit=1'];
 const CLEAR_NEW_VISIT = ['appendToTrackingUrl', ''];
 
-/** Fills the queue with fillers until exactly `room` more commands fit. The tracker must have started. */
-function leaveRoom(room: number): void {
+/** Fills the queue with fillers until it holds `length` commands. The tracker must have started. */
+function fillQueueTo(length: number): void {
   const queue = queuedCommands();
-  while (queue.length < CAP - room) queue.push(['filler']);
+  while (queue.length < length) queue.push(['filler']);
+}
+
+/** Fills the queue until exactly `room` more commands fit under the cap. */
+function leaveRoom(room: number): void {
+  fillQueueTo(CAP - room);
 }
 
 /** What matomo.js does when it loads: the queue is emptied (only the configuration is kept here). */
@@ -192,7 +198,6 @@ describe('other command groups at the queue cap', () => {
 
     expect(count('setCustomDimension')).toBe(0);
   });
-
 });
 
 interface ReplayedHit {
@@ -278,18 +283,18 @@ describe('reset at the queue cap', () => {
     expect(hits).toEqual([{ userId: undefined, dimensions: {}, newVisit: true }]);
   });
 
-  it('would have sent the previous user id if its commands had been dropped', () => {
-    const tracker = identifiedWithRoomLeft(4);
-    const stale = replayHits([...queuedCommands(), ['trackPageView']]);
+  it('control: without the clearing commands the next hit would carry the previous user id and dimensions', () => {
+    identifiedWithRoomLeft(4);
 
-    expect(stale).toEqual([{ userId: 'userA', dimensions, newVisit: false }]);
-    tracker.reset();
+    const hits = replayHits([...queuedCommands(), ['trackPageView']]);
+
+    expect(hits).toEqual([{ userId: 'userA', dimensions, newVisit: false }]);
   });
 
   it('turns tracking off, rather than misattribute later hits, when even the reserve is full', () => {
     const tracker = createTracker();
     tracker.push(['start']);
-    leaveRoom(-99);
+    fillQueueTo(CAP + RESERVE - 1);
 
     tracker.reset();
 
@@ -306,7 +311,7 @@ describe('reset at the queue cap', () => {
       longest = Math.max(longest, queuedCommands().length);
     }
 
-    expect(longest).toBeLessThanOrEqual(CAP + 100);
+    expect(longest).toBeLessThanOrEqual(CAP + RESERVE);
     expect(tracker.enabled).toBe(false);
   });
 });

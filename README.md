@@ -23,8 +23,7 @@ yarn add "@nanoco/matomo-tracker@github:nanocohub/matomo-tracker#v1.0.0"   # yar
 npm i "github:nanocohub/matomo-tracker#v1.0.0"                              # npm
 ```
 
-Always pin a tag, never a branch. While the first release is being rolled out the tag is `v1.0.0-rc.5`.
-React is an optional peer (`>=17`), needed only for `@nanoco/matomo-tracker/react`.
+Always pin a tag, never a branch. React is an optional peer (`>=17`), needed only for `@nanoco/matomo-tracker/react`.
 
 | Import                           | What                                                                             |
 | -------------------------------- | -------------------------------------------------------------------------------- |
@@ -55,7 +54,8 @@ Nothing happens until the tracker is first used: no script, no queue writes. The
 
 A tracker is **disabled** (`tracker.enabled === false`, every call a no-op) when `url` is not https,
 `siteId` is not a positive integer, or `enabled: false`. Leave the env vars unset locally and the
-app simply does not track. `enabled` also turns `false` if matomo.js fails to load.
+app simply does not track. `enabled` also turns `false` if matomo.js fails to load, or if the commands of `reset()`
+cannot be queued (see "What the tracker does for you").
 
 ## Options
 
@@ -116,7 +116,8 @@ view start a new visit, and so does a different one after a hard reload of the t
 **`reset()`** is for logout. It clears the user id and every dimension set through `identify`, clears the
 referrer, and makes the **next** page view a new visit (`new_visit=1` on that one request only). It never sends
 a hit itself, and it survives the hard reload that many logouts end in (`location.href = '/login'`). Its commands
-are always queued, even before matomo.js has loaded and the queue is full.
+are queued even above the cap of the pre-load queue (in a reserve), so they always reach matomo.js before the
+next hit. The one exception is a full reserve, which turns tracking off (see "What the tracker does for you").
 
 **`setDimensions(dimensions)`** is for dimensions that are not about the user (language, tenant). `reset()`
 leaves them alone.
@@ -340,8 +341,8 @@ For a plain `<script>` page with no modules, load `dist/browser.global.js` from 
 - `reset()` is the one exception: its commands (the user id, the dimensions and the referrer being cleared) use a
   reserve of 100 commands above the cap, so they always reach matomo.js before the next hit. Without them that hit
   would go out as a new visit still carrying the previous user's id and dimensions. If even the reserve is full
-  (about 300 `reset()` calls while matomo.js has still not loaded), tracking is turned off rather than misattribute
-  what follows.
+  (about 300 `reset()` calls while matomo.js has still not loaded), tracking is turned off (`enabled` becomes
+  `false`) rather than misattribute what follows.
 - Keeps working from memory when `sessionStorage` is blocked.
 
 ## Debugging
