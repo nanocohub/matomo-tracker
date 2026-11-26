@@ -134,9 +134,9 @@ leaves them alone.
 **`trackPageView({ url?, title?, force? })`**. The URL defaults to `window.location.href` and may be a path.
 It is reduced to `origin + normalizePath(pathname) + kept query params`. The commands go out in this order:
 `setReferrerUrl` (the previous tracked URL; none for the first view of a page load, see below), `setCustomUrl`,
-`setDocumentTitle`, the pending ecommerce product view, the new-visit flag, `trackPageView`. A view whose final
-URL equals the last one is skipped unless `force`, and drops a pending product view (see `productView`). Each
-tracked view resets the `trackError` counter.
+`setDocumentTitle`, the pending ecommerce product view, the new-visit flag, `trackPageView`, then the new-visit
+flag and the product view cleared again. A view whose final URL equals the last one is skipped unless `force`, and
+drops a pending product view (see `productView`). Each tracked view resets the `trackError` counter.
 
 The referrer of the **first view of a page load** is `document.referrer`. When it is a page of the **same origin**
 (the OAuth callback that redirected to this page, say) it is set at init in its sanitized form, with the same
@@ -154,11 +154,19 @@ would record it as a zero).
 **`trackError(kind)`** sends an event with category `Error` and `kind` as the action, at most
 `maxErrorEventsPerPage` times per page view.
 
-**`ecommerce.productView(product)`** is applied to the **next** page view that is actually sent, so call it
-before the view. For a product page whose data loads late, hold the page view back with `ready` (see the hook).
-A page view skipped as a repeat of the last URL **drops** the pending product instead: it belongs to the page that
-was already tracked (a product component that remounts on the same page, say), and kept pending it would ride on
-the next page, the cart for example. Pass `force: true` to send the page again with the product.
+**`ecommerce.productView(product)`** is applied to the **next** page view that is actually sent, and to that one
+only, so call it before the view. For a product page whose data loads late, hold the page view back with `ready`
+(see the hook). A page view skipped as a repeat of the last URL **drops** the pending product instead: it belongs
+to the page that was already tracked (a product component that remounts on the same page, say), and kept pending
+it would ride on the next page, the cart for example. Pass `force: true` to send the page again with the product.
+
+Why the product view is cleared right after its page view: matomo.js keeps the last `setEcommerceView` for the
+whole page load and adds it (`_pks`, `_pkn`, `_pkc`, `_pkp`) to **every** later request, page views and events
+alike, and Matomo records each of those as a view of that product. In a single-page app the cart, the checkout and
+every event after a product page would count as views of it. So the page view's commands end with
+`setEcommerceView` without arguments: later requests then carry only an empty `_pkc`, which Matomo ignores. A
+`setEcommerceView` sent through `push()` is not cleared and sticks the same way.
+
 **`ecommerce.cartUpdate(items, grandTotal)`** replaces the cart and sends the update.
 **`ecommerce.order(order)`** sends the order; the same `orderId` twice in one page session is ignored (Matomo
 also dedupes by order id on the server). Items default to price 0 and quantity 1.
@@ -347,11 +355,14 @@ For a plain `<script>` page with no modules, load `dist/browser.global.js` from 
   and chains referrers across single-page navigations.
 - Starts a new visit through `appendToTrackingUrl('new_visit=1')` around **one** page view only, so a heartbeat
   or an event sent in between cannot open a phantom visit.
+- Sends an ecommerce product view with **one** page view only, and clears it right after that hit: matomo.js
+  would otherwise add it to every later request of the page load (see `productView`).
 - Bounds the pre-load queue at 500 commands, and turns tracking off when matomo.js fails to load. An operation
-  that needs several commands (a page view with a new visit, `identify`, `setDimensions`, a cart or an order) is
-  queued whole or not at all, and the tracker changes its own state only after those commands were queued. A
-  full queue therefore never leaves a new visit flag set without the command that clears it, and a dropped page
-  view, `identify` or order is tried again instead of being remembered as done.
+  that needs several commands (a page view with a new visit or a product view, `identify`, `setDimensions`, a cart
+  or an order) is queued whole or not at all, and the tracker changes its own state only after those commands were
+  queued. A full queue therefore never leaves a new visit flag or a product view set without the command that
+  clears it, and a dropped page view (with its product view), `identify` or order is tried again instead of being
+  remembered as done.
 - `reset()` is the one exception: its commands (the user id, the dimensions and the referrer being cleared) use a
   reserve of 100 commands above the cap, so they always reach matomo.js before the next hit. Without them that hit
   would go out as a new visit still carrying the previous user's id and dimensions. If even the reserve is full

@@ -87,6 +87,85 @@ describe('the new visit group at the queue cap', () => {
   });
 });
 
+describe('the product view group at the queue cap', () => {
+  const PRODUCT_VIEW = ['setEcommerceView', 'SKU-1', '', '', ''];
+  const CLEAR_PRODUCT_VIEW = ['setEcommerceView'];
+
+  function trackerWithPendingProduct() {
+    const tracker = createTracker();
+    tracker.ecommerce.productView({ sku: 'SKU-1' });
+    return tracker;
+  }
+
+  /** Every product set must be followed by its clear, or matomo.js would send it with every later request. */
+  function productViewsLeftSet(): number {
+    const clears = queuedCommands().filter((command) => command.length === 1 && command[0] === 'setEcommerceView');
+    return count('setEcommerceView', 'SKU-1') - clears.length;
+  }
+
+  it('is queued whole, its clear included, when it fits exactly', () => {
+    const tracker = trackerWithPendingProduct();
+    leaveRoom(5);
+
+    tracker.trackPageView({ url: '/products/1' });
+
+    expect(queuedCommands()).toHaveLength(CAP);
+    expect(queuedCommands().slice(-5)).toEqual([
+      ['setCustomUrl', `${PAGE_ORIGIN}/products/1`],
+      ['setDocumentTitle', ''],
+      PRODUCT_VIEW,
+      ['trackPageView'],
+      CLEAR_PRODUCT_VIEW,
+    ]);
+  });
+
+  it('is not queued at all when one command short', () => {
+    const tracker = trackerWithPendingProduct();
+    leaveRoom(4);
+    const queuedBefore = queuedCommands().length;
+
+    tracker.trackPageView({ url: '/products/1' });
+
+    expect(queuedCommands()).toHaveLength(queuedBefore);
+  });
+
+  it.each([0, 1, 2, 3, 4, 5, 6, 7, 8])(
+    'never leaves a product view set without its clear, also with a new visit, with %i commands of room',
+    (room) => {
+      const tracker = trackerWithPendingNewVisit();
+      tracker.ecommerce.productView({ sku: 'SKU-1' });
+      leaveRoom(room);
+
+      tracker.trackPageView({ url: '/products/1' });
+
+      expect(productViewsLeftSet()).toBe(0);
+      expect(count('appendToTrackingUrl', 'new_visit=1')).toBe(count('appendToTrackingUrl', ''));
+    },
+  );
+
+  it('keeps the product pending after a dropped view, then applies and clears it on the next view that fits', () => {
+    const tracker = trackerWithPendingProduct();
+    leaveRoom(4);
+    tracker.trackPageView({ url: '/products/1' });
+    drainQueue();
+
+    tracker.trackPageView({ url: '/products/1' });
+    tracker.trackPageView({ url: '/cart' });
+
+    expect(queuedCommands().slice(DEFAULT_INIT_COMMANDS.length)).toEqual([
+      ['setCustomUrl', `${PAGE_ORIGIN}/products/1`],
+      ['setDocumentTitle', ''],
+      PRODUCT_VIEW,
+      ['trackPageView'],
+      CLEAR_PRODUCT_VIEW,
+      ['setReferrerUrl', `${PAGE_ORIGIN}/products/1`],
+      ['setCustomUrl', `${PAGE_ORIGIN}/cart`],
+      ['setDocumentTitle', ''],
+      ['trackPageView'],
+    ]);
+  });
+});
+
 describe('page views at the queue cap', () => {
   it('does not remember a view that was dropped, so the same url is tracked once there is room', () => {
     const tracker = createTracker();
@@ -109,7 +188,7 @@ describe('page views at the queue cap', () => {
 
     tracker.trackPageView({ url: '/products/1' });
 
-    expect(count('setEcommerceView')).toBe(1);
+    expect(count('setEcommerceView', 'SKU-1')).toBe(1);
   });
 
   it('does not reset the error counter for a dropped view', () => {

@@ -102,8 +102,9 @@ export interface EcommerceOrder {
 
 export interface MatomoEcommerce {
   /**
-   * Applied to the next page view that is actually sent. A page view skipped as a repeat of the last
-   * URL drops it instead (the product belongs to the page already tracked); `force: true` sends it.
+   * Applied to the next page view that is actually sent, and cleared right after that hit (matomo.js would
+   * otherwise send it with every later request). A page view skipped as a repeat of the last URL drops it
+   * instead (the product belongs to the page already tracked); `force: true` sends it.
    */
   productView(product: EcommerceProduct): void;
   cartUpdate(items: EcommerceItem[], grandTotal: number): void;

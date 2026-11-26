@@ -4,6 +4,7 @@ import type { DimensionEntry } from './dimensions';
 import {
   cartUpdateCommand,
   clearCartCommand,
+  clearProductViewCommand,
   itemCommands,
   normalizeProduct,
   orderCommand,
@@ -198,6 +199,9 @@ export function createMatomoTracker(options: MatomoTrackerOptions): MatomoTracke
     } else {
       commands.push(['trackPageView']);
     }
+
+    // Like the new visit flag, the product view would stick to every later request: it is for this one hit.
+    if (state.pendingProduct !== null) commands.push(clearProductViewCommand());
     return commands;
   }
 

@@ -44,6 +44,15 @@ export function productViewCommand(view: ProductView): MatomoCommand {
   return ['setEcommerceView', view.sku, view.name, category, view.price];
 }
 
+/**
+ * matomo.js keeps the last product view for the rest of the page load and sends it with every later
+ * request, page views and events alike, and Matomo records each of them as a view of that product.
+ * Called without arguments it keeps only an empty category, which Matomo ignores.
+ */
+export function clearProductViewCommand(): MatomoCommand {
+  return ['setEcommerceView'];
+}
+
 export function clearCartCommand(): MatomoCommand {
   return ['clearEcommerceCart'];
 }

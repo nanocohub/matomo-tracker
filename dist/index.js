@@ -122,6 +122,9 @@ function productViewCommand(view) {
   const category = Array.isArray(view.category) ? JSON.stringify(view.category) : view.category;
   return ["setEcommerceView", view.sku, view.name, category, view.price];
 }
+function clearProductViewCommand() {
+  return ["setEcommerceView"];
+}
 function clearCartCommand() {
   return ["clearEcommerceCart"];
 }
@@ -426,6 +429,7 @@ function createMatomoTracker(options) {
     } else {
       commands.push(["trackPageView"]);
     }
+    if (state.pendingProduct !== null) commands.push(clearProductViewCommand());
     return commands;
   }
   function trackPageView(view) {

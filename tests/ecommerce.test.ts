@@ -1,6 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import { PAGE_ORIGIN, commandsAfterInit, createTracker } from './helpers';
 
+const CLEAR_PRODUCT_VIEW = ['setEcommerceView'];
+
+/** The `setEcommerceView` commands that set a product, leaving out the ones that clear it. */
+function productViewsQueued(): unknown[][] {
+  return commandsAfterInit().filter((command) => command[0] === 'setEcommerceView' && command.length > 1);
+}
+
 describe('ecommerce.productView', () => {
   it('queues nothing by itself', () => {
     createTracker().ecommerce.productView({ sku: 'SKU-1', name: 'Router', category: 'Network', price: 99 });
@@ -8,7 +15,7 @@ describe('ecommerce.productView', () => {
     expect(commandsAfterInit()).toEqual([]);
   });
 
-  it('is applied to the next page view, after the title and before the hit', () => {
+  it('is applied to the next page view, after the title and before the hit, and cleared right after the hit', () => {
     const tracker = createTracker();
     tracker.ecommerce.productView({ sku: 'SKU-1', name: 'Router', category: 'Network', price: 99 });
 
@@ -19,6 +26,26 @@ describe('ecommerce.productView', () => {
       ['setDocumentTitle', 'Router'],
       ['setEcommerceView', 'SKU-1', 'Router', 'Network', 99],
       ['trackPageView'],
+      CLEAR_PRODUCT_VIEW,
+    ]);
+  });
+
+  it('is cleared after the new visit flag, in the same group, when the view also starts a new visit', () => {
+    const tracker = createTracker();
+    tracker.reset();
+    tracker.ecommerce.productView({ sku: 'SKU-1' });
+    const queuedBefore = commandsAfterInit().length;
+
+    tracker.trackPageView({ url: '/products/1', title: 'Router' });
+
+    expect(commandsAfterInit().slice(queuedBefore)).toEqual([
+      ['setCustomUrl', `${PAGE_ORIGIN}/products/1`],
+      ['setDocumentTitle', 'Router'],
+      ['setEcommerceView', 'SKU-1', '', '', ''],
+      ['appendToTrackingUrl', 'new_visit=1'],
+      ['trackPageView'],
+      ['appendToTrackingUrl', ''],
+      CLEAR_PRODUCT_VIEW,
     ]);
   });
 
@@ -29,8 +56,13 @@ describe('ecommerce.productView', () => {
     tracker.trackPageView({ url: '/products/1' });
     tracker.trackPageView({ url: '/cart' });
 
-    const views = commandsAfterInit().filter(([name]) => name === 'setEcommerceView');
-    expect(views).toHaveLength(1);
+    expect(productViewsQueued()).toHaveLength(1);
+  });
+
+  it('queues no clear for a page view without a product', () => {
+    createTracker().trackPageView({ url: '/cart' });
+
+    expect(commandsAfterInit().some(([name]) => name === 'setEcommerceView')).toBe(false);
   });
 
   it('uses empty values for what is absent', () => {
@@ -85,6 +117,7 @@ describe('ecommerce.productView', () => {
       ['setDocumentTitle', 'Fan'],
       ['setEcommerceView', 'NWF1606', 'Fan', '["Quat"]', 1000],
       ['trackPageView'],
+      CLEAR_PRODUCT_VIEW,
       ['setReferrerUrl', `${PAGE_ORIGIN}/products/fan`],
       ['setCustomUrl', `${PAGE_ORIGIN}/cart`],
       ['setDocumentTitle', 'Cart'],
@@ -100,9 +133,7 @@ describe('ecommerce.productView', () => {
 
     tracker.trackPageView({ url: '/products/2' });
 
-    expect(commandsAfterInit().filter(([name]) => name === 'setEcommerceView')).toEqual([
-      ['setEcommerceView', 'SKU-2', '', '', ''],
-    ]);
+    expect(productViewsQueued()).toEqual([['setEcommerceView', 'SKU-2', '', '', '']]);
   });
 
   it('is applied to a forced repeat of the last page view, and only to it', () => {
@@ -120,6 +151,7 @@ describe('ecommerce.productView', () => {
       ['setDocumentTitle', 'Router'],
       ['setEcommerceView', 'SKU-1', '', '', ''],
       ['trackPageView'],
+      CLEAR_PRODUCT_VIEW,
       ['setReferrerUrl', `${PAGE_ORIGIN}/products/1`],
       ['setCustomUrl', `${PAGE_ORIGIN}/cart`],
       ['setDocumentTitle', 'Cart'],
